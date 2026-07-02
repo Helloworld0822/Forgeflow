@@ -1,6 +1,46 @@
 use crate::domain::{ProjectId, StageCommand, StageCompleted, StageId, StageState};
 use crate::error::{AutoForgeError, Result};
+#[cfg(test)]
+use crate::services::quality::MAX_DEBUG_CYCLES;
 use std::collections::{HashMap, HashSet};
+
+/// 품질 게이트 상태 — Verify ↔ Debug 루프 + SecurityPatch
+#[derive(Debug, Clone, Default)]
+pub struct QualityGate {
+    pub verify_passed: bool,
+    pub debug_cycles: u8,
+    pub awaiting_debug: bool,
+    pub security_done: bool,
+    pub max_debug_cycles: u8,
+}
+
+impl QualityGate {
+    pub fn with_max_cycles(max: u8) -> Self {
+        Self {
+            max_debug_cycles: max,
+            ..Default::default()
+        }
+    }
+
+    pub fn record_verify_failed(&mut self) {
+        self.verify_passed = false;
+        self.awaiting_debug = self.debug_cycles < self.max_debug_cycles;
+    }
+
+    pub fn record_verify_passed(&mut self) {
+        self.verify_passed = true;
+        self.awaiting_debug = false;
+    }
+
+    pub fn record_debug_done(&mut self) {
+        self.debug_cycles += 1;
+        self.awaiting_debug = false;
+    }
+
+    pub fn verify_exhausted(&self) -> bool {
+        !self.verify_passed && self.debug_cycles >= self.max_debug_cycles && !self.awaiting_debug
+    }
+}
 
 /// DAG 스케줄러 — 순수 로직, I/O 없음
 #[derive(Debug, Clone)]
@@ -9,6 +49,7 @@ pub struct DagScheduler {
     running: HashSet<StageId>,
     failed: Option<StageId>,
     project_id: ProjectId,
+    pub quality: QualityGate,
 }
 
 impl DagScheduler {
@@ -18,12 +59,21 @@ impl DagScheduler {
             running: HashSet::new(),
             failed: None,
             project_id: ProjectId::new(),
+            quality: QualityGate::default(),
         }
     }
 
     pub fn with_project(project_id: ProjectId) -> Self {
         Self {
             project_id,
+            ..Self::new()
+        }
+    }
+
+    pub fn with_quality(project_id: ProjectId, max_debug_cycles: u8) -> Self {
+        Self {
+            project_id,
+            quality: QualityGate::with_max_cycles(max_debug_cycles),
             ..Self::new()
         }
     }
@@ -40,6 +90,31 @@ impl DagScheduler {
     pub fn mark_failed(&mut self, stage: StageId) {
         self.running.remove(&stage);
         self.failed = Some(stage);
+    }
+
+    /// Verify 결과 기록 — 통과 시 completed, 실패 시 Debug 루프 또는 실패
+    pub fn record_verify_result(&mut self, passed: bool) {
+        self.running.remove(&StageId::Verify);
+        if passed {
+            self.quality.record_verify_passed();
+            self.completed.insert(StageId::Verify);
+        } else if self.quality.verify_exhausted() || self.quality.debug_cycles >= self.quality.max_debug_cycles {
+            self.failed = Some(StageId::Verify);
+        } else {
+            self.quality.record_verify_failed();
+            // Verify는 통과할 때까지 completed에 넣지 않음
+        }
+    }
+
+    pub fn record_debug_done(&mut self) {
+        self.running.remove(&StageId::Debug);
+        self.quality.record_debug_done();
+    }
+
+    pub fn record_security_done(&mut self) {
+        self.running.remove(&StageId::SecurityPatch);
+        self.quality.security_done = true;
+        self.completed.insert(StageId::SecurityPatch);
     }
 
     pub fn ready_stages(&self) -> Vec<StageCommand> {
@@ -82,14 +157,29 @@ impl DagScheduler {
             ready.push(StageId::Implement);
         }
 
-        if self.completed.contains(&StageId::Implement)
-            && !self.completed.contains(&StageId::Verify)
-            && !self.running.contains(&StageId::Verify)
-        {
-            ready.push(StageId::Verify);
+        // ── 품질 게이트: Verify ↔ Debug 루프 → SecurityPatch ──
+        if self.completed.contains(&StageId::Implement) && !self.quality.verify_passed {
+            if self.quality.awaiting_debug
+                && !self.running.contains(&StageId::Debug)
+                && !self.running.contains(&StageId::Verify)
+            {
+                ready.push(StageId::Debug);
+            } else if !self.quality.awaiting_debug
+                && !self.running.contains(&StageId::Verify)
+                && !self.running.contains(&StageId::Debug)
+            {
+                ready.push(StageId::Verify);
+            }
         }
 
-        if self.completed.contains(&StageId::Verify)
+        if self.quality.verify_passed
+            && !self.quality.security_done
+            && !self.running.contains(&StageId::SecurityPatch)
+        {
+            ready.push(StageId::SecurityPatch);
+        }
+
+        if self.quality.security_done
             && !self.completed.contains(&StageId::Deliver)
             && !self.running.contains(&StageId::Deliver)
         {
@@ -108,6 +198,10 @@ impl DagScheduler {
 
     pub fn is_pipeline_complete(&self) -> bool {
         self.completed.contains(&StageId::Deliver)
+    }
+
+    pub fn has_failed(&self) -> bool {
+        self.failed.is_some()
     }
 }
 
@@ -148,6 +242,7 @@ fn is_valid_transition(from: StageState, to: StageState) -> bool {
             | (StageState::Running, StageState::Completed)
             | (StageState::Running, StageState::Failed)
             | (StageState::Failed, StageState::Queued)
+            | (StageState::Completed, StageState::Queued) // Debug 루프 재시도
             | (_, StageState::Skipped)
     )
 }
@@ -156,19 +251,19 @@ fn is_valid_transition(from: StageState, to: StageState) -> bool {
 mod tests {
     use super::*;
 
+    fn complete_through(sched: &mut DagScheduler, stage: StageId) {
+        sched.mark_completed(&StageCompleted {
+            project_id: ProjectId::new(),
+            stage,
+            output_artifacts: vec![],
+        });
+    }
+
     #[test]
     fn parallel_architect_and_design_after_summarize() {
         let mut sched = DagScheduler::new();
-        sched.mark_completed(&StageCompleted {
-            project_id: ProjectId::new(),
-            stage: StageId::Ingest,
-            output_artifacts: vec![],
-        });
-        sched.mark_completed(&StageCompleted {
-            project_id: ProjectId::new(),
-            stage: StageId::Summarize,
-            output_artifacts: vec![],
-        });
+        complete_through(&mut sched, StageId::Ingest);
+        complete_through(&mut sched, StageId::Summarize);
 
         let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
         assert!(ready.contains(&StageId::Architect));
@@ -179,15 +274,89 @@ mod tests {
     fn implement_waits_for_both_architect_and_design() {
         let mut sched = DagScheduler::new();
         for stage in [StageId::Ingest, StageId::Summarize, StageId::Architect] {
-            sched.mark_completed(&StageCompleted {
-                project_id: ProjectId::new(),
-                stage,
-                output_artifacts: vec![],
-            });
+            complete_through(&mut sched, stage);
         }
 
         let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
         assert!(!ready.contains(&StageId::Implement));
         assert!(ready.contains(&StageId::Design));
+    }
+
+    #[test]
+    fn verify_runs_after_implement() {
+        let mut sched = DagScheduler::with_quality(ProjectId::new(), MAX_DEBUG_CYCLES);
+        for stage in [
+            StageId::Ingest,
+            StageId::Summarize,
+            StageId::Architect,
+            StageId::Design,
+            StageId::Implement,
+        ] {
+            complete_through(&mut sched, stage);
+        }
+
+        let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
+        assert!(ready.contains(&StageId::Verify));
+    }
+
+    #[test]
+    fn verify_fail_triggers_debug_then_reverify() {
+        let mut sched = DagScheduler::with_quality(ProjectId::new(), 3);
+        for stage in [
+            StageId::Ingest,
+            StageId::Summarize,
+            StageId::Architect,
+            StageId::Design,
+            StageId::Implement,
+        ] {
+            complete_through(&mut sched, stage);
+        }
+
+        sched.record_verify_result(false);
+        let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
+        assert!(ready.contains(&StageId::Debug));
+
+        sched.mark_running(StageId::Debug);
+        sched.record_debug_done();
+        let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
+        assert!(ready.contains(&StageId::Verify));
+    }
+
+    #[test]
+    fn verify_pass_enables_security_patch() {
+        let mut sched = DagScheduler::with_quality(ProjectId::new(), 3);
+        for stage in [
+            StageId::Ingest,
+            StageId::Summarize,
+            StageId::Architect,
+            StageId::Design,
+            StageId::Implement,
+        ] {
+            complete_through(&mut sched, stage);
+        }
+
+        sched.record_verify_result(true);
+        let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
+        assert!(ready.contains(&StageId::SecurityPatch));
+        assert!(!ready.contains(&StageId::Deliver));
+    }
+
+    #[test]
+    fn security_patch_then_deliver() {
+        let mut sched = DagScheduler::with_quality(ProjectId::new(), 3);
+        for stage in [
+            StageId::Ingest,
+            StageId::Summarize,
+            StageId::Architect,
+            StageId::Design,
+            StageId::Implement,
+        ] {
+            complete_through(&mut sched, stage);
+        }
+        sched.record_verify_result(true);
+        sched.record_security_done();
+
+        let ready: HashSet<_> = sched.ready_stages().into_iter().map(|c| c.stage).collect();
+        assert!(ready.contains(&StageId::Deliver));
     }
 }

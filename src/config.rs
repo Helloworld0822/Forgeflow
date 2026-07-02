@@ -9,6 +9,8 @@ pub struct Config {
     pub artifacts_endpoint: String,
     pub artifacts_bucket: String,
     pub default_repo_url: Option<String>,
+    /// Verify 실패 시 Debug 재시도 최대 횟수
+    pub max_debug_cycles: u8,
 }
 
 impl Config {
@@ -26,6 +28,10 @@ impl Config {
             artifacts_bucket: env::var("ARTIFACTS_BUCKET")
                 .unwrap_or_else(|_| "autoforge".into()),
             default_repo_url: env::var("DEFAULT_REPO_URL").ok(),
+            max_debug_cycles: env::var("MAX_DEBUG_CYCLES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3),
         }
     }
 

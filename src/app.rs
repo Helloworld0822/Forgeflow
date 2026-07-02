@@ -3,6 +3,7 @@ use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, S3ArtifactStore};
 use crate::services::orchestrator::DagScheduler;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 애플리케이션 전역 상태
@@ -47,8 +48,10 @@ impl App {
                 .iter()
                 .map(|&stage| (stage, StageState::Queued))
                 .collect(),
-            scheduler: DagScheduler::with_project(id),
+            scheduler: DagScheduler::with_quality(id, self.config.max_debug_cycles),
             pdf_bytes: None,
+            stage_outputs: HashMap::new(),
+            accumulated_artifacts: Vec::new(),
         };
         self.projects.insert(project.id.0, project.clone());
         project

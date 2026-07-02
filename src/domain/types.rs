@@ -14,6 +14,8 @@ pub enum StageId {
     Design,
     Implement,
     Verify,
+    Debug,
+    SecurityPatch,
     Deliver,
 }
 
@@ -26,6 +28,8 @@ impl StageId {
             StageId::Design,
             StageId::Implement,
             StageId::Verify,
+            StageId::Debug,
+            StageId::SecurityPatch,
             StageId::Deliver,
         ]
     }
@@ -38,6 +42,8 @@ impl StageId {
             StageId::Design => "design",
             StageId::Implement => "implement",
             StageId::Verify => "verify",
+            StageId::Debug => "debug",
+            StageId::SecurityPatch => "security_patch",
             StageId::Deliver => "deliver",
         }
     }
@@ -84,6 +90,30 @@ impl ModelProfile {
     pub fn implement() -> Self {
         Self {
             model_id: "gpt-5.3-codex-high".into(),
+            mode: AgentMode::Agent,
+            params: vec![],
+        }
+    }
+
+    pub fn verify() -> Self {
+        Self {
+            model_id: "gpt-5.3-codex-high".into(),
+            mode: AgentMode::Agent,
+            params: vec![],
+        }
+    }
+
+    pub fn debug() -> Self {
+        Self {
+            model_id: "gpt-5.3-codex-high".into(),
+            mode: AgentMode::Agent,
+            params: vec![],
+        }
+    }
+
+    pub fn security_patch() -> Self {
+        Self {
+            model_id: "claude-fable-5-thinking-high".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -160,6 +190,10 @@ pub struct Project {
     pub stages: HashMap<StageId, StageState>,
     pub scheduler: DagScheduler,
     pub pdf_bytes: Option<Vec<u8>>,
+    /// 스테이지별 메타데이터 (pr_url, verify_report 등)
+    pub stage_outputs: HashMap<StageId, serde_json::Value>,
+    /// 누적 산출물 참조
+    pub accumulated_artifacts: Vec<ArtifactRef>,
 }
 
 #[derive(Debug, Clone, Serialize)]
