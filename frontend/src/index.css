@@ -786,3 +786,39 @@ input {
     grid-template-columns: 1fr;
   }
 }
+
+/* 이미지 호스팅 */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.image-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.image-preview {
+  aspect-ratio: 1 / 1;
+  background: repeating-conic-gradient(#2a2a35 0% 25%, #23232c 0% 50%) 50% / 16px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.image-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.65rem;
+  gap: 0.5rem;
+}

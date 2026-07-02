@@ -7,8 +7,8 @@ version: "3.9"
 x-app-env: &app-env
   MESSAGE_QUEUE_ENABLED: "true"
   REDIS_URL: redis://redis:6379
-  ARTIFACTS_ENDPOINT: http://minio:9000
-  ARTIFACTS_BUCKET: autoforge
+  ARTIFACTS_DIR: /data/artifacts
+  MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
   CURSOR_API_KEY: ${CURSOR_API_KEY:-}
   STITCH_API_KEY: ${STITCH_API_KEY:-}
   SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
@@ -20,6 +20,16 @@ x-app-env: &app-env
   GITHUB_ORG: ${GITHUB_ORG:-}
   GITHUB_AUTO_MERGE: ${GITHUB_AUTO_MERGE:-true}
   PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+  API_KEY: ${API_KEY:-}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+
+x-worker-limits: &worker-limits
+  deploy:
+    resources:
+      limits:
+        cpus: "1.0"
+        memory: 512M
 
 services:
   # Nginx — 프론트엔드 정적 파일 + API 리버스 프록시
@@ -30,9 +40,23 @@ services:
     image: autoforge-nginx:latest
     ports:
       - "80:80"
+      # HTTPS 사용 시 인증서를 nginx/certs 에 마운트하고 아래 포트를 열어주세요.
+      # 자세한 내용은 docs/PODMAN.md 참고.
+      # - "443:443"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
 
   # Rust API 백엔드
   api:
@@ -47,10 +71,23 @@ services:
       PORT: "8080"
     expose:
       - "8080"
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
   orchestrator:
     image: autoforge-api:latest
@@ -58,20 +95,26 @@ services:
     environment:
       <<: *app-env
       ORCHESTRATOR_ID: orchestrator-1
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    <<: *worker-limits
 
   worker:
     image: autoforge-api:latest
     command: ["worker"]
     environment:
       <<: *app-env
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    <<: *worker-limits
 
   redis:
     image: docker.io/library/redis:7-alpine
@@ -82,19 +125,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-
-  minio:
-    image: docker.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
 volumes:
   redis-data:
-  minio-data:
+  # api/worker/orchestrator가 공유하는 아티팩트/이미지 저장소.
+  # 단일 호스트를 넘어 여러 노드에 분산 배포하려면 NFS 등 네트워크 파일시스템으로 교체하세요.
+  artifacts-data:
