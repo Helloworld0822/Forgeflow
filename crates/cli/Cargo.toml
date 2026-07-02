@@ -1,0 +1,20 @@
+[package]
+name = "autoforge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "autoforge"
+path = "src/main.rs"
+
+[dependencies]
+autoforge-api = { path = "../api" }
+autoforge-orchestrator = { path = "../orchestrator" }
+autoforge-worker = { path = "../worker" }
+autoforge-shared = { path = "../shared" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
