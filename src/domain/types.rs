@@ -180,8 +180,8 @@ pub struct StageCompleted {
     pub output_artifacts: Vec<ArtifactRef>,
 }
 
-/// 런타임 프로젝트 엔티티 (인메모리 저장)
-#[derive(Debug, Clone)]
+/// 런타임 프로젝트 엔티티
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: ProjectId,
     pub name: Option<String>,
@@ -194,6 +194,28 @@ pub struct Project {
     pub stage_outputs: HashMap<StageId, serde_json::Value>,
     /// 누적 산출물 참조
     pub accumulated_artifacts: Vec<ArtifactRef>,
+    /// Slack 진행 메시지 ts (업데이트용)
+    #[serde(default)]
+    pub slack_message_ts: Option<String>,
+}
+
+impl Project {
+    /// 전체 파이프라인 진행률 (0–100)
+    pub fn progress_percent(&self) -> u8 {
+        let total = StageId::all().len() as u32;
+        let done = self
+            .stages
+            .values()
+            .filter(|s| matches!(s, StageState::Completed | StageState::Skipped))
+            .count() as u32;
+        ((done * 100) / total.max(1)) as u8
+    }
+
+    pub fn display_name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Project {}", &self.id.0.to_string()[..8]))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,6 +225,10 @@ pub struct ProjectView {
     pub repo_url: Option<String>,
     pub state: PipelineState,
     pub stages: Vec<StageStatusView>,
+    pub progress_percent: u8,
+    pub pr_url: Option<String>,
+    pub merge_status: Option<String>,
+    pub github_repo: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -214,6 +240,27 @@ pub struct StageStatusView {
 
 impl From<&Project> for ProjectView {
     fn from(p: &Project) -> Self {
+        let pr_url = p
+            .stage_outputs
+            .get(&StageId::Implement)
+            .and_then(|m| m.get("pr_url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let merge_status = p
+            .stage_outputs
+            .get(&StageId::Deliver)
+            .and_then(|m| m.get("merge_status"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let github_repo = p
+            .stage_outputs
+            .get(&StageId::Ingest)
+            .and_then(|m| m.get("github_repo"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         Self {
             id: p.id.0,
             name: p.name.clone(),
@@ -226,7 +273,32 @@ impl From<&Project> for ProjectView {
                     status: p.stages.get(&stage).copied().unwrap_or(StageState::Queued),
                 })
                 .collect(),
+            progress_percent: p.progress_percent(),
+            pr_url,
+            merge_status,
+            github_repo,
             created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectDetailView {
+    #[serde(flatten)]
+    pub view: ProjectView,
+    pub stage_outputs: HashMap<String, serde_json::Value>,
+}
+
+impl From<&Project> for ProjectDetailView {
+    fn from(p: &Project) -> Self {
+        let stage_outputs = p
+            .stage_outputs
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+            .collect();
+        Self {
+            view: ProjectView::from(p),
+            stage_outputs,
         }
     }
 }

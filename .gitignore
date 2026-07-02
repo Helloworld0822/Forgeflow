@@ -2,3 +2,4 @@
 Cargo.lock
 .env
 *.pdf
+frontend/node_modules/

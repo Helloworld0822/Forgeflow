@@ -2,10 +2,11 @@ use crate::domain::{ProjectId, StageCommand, StageCompleted, StageId, StageState
 use crate::error::{AutoForgeError, Result};
 #[cfg(test)]
 use crate::services::quality::MAX_DEBUG_CYCLES;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// 품질 게이트 상태 — Verify ↔ Debug 루프 + SecurityPatch
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QualityGate {
     pub verify_passed: bool,
     pub debug_cycles: u8,
@@ -43,7 +44,7 @@ impl QualityGate {
 }
 
 /// DAG 스케줄러 — 순수 로직, I/O 없음
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DagScheduler {
     completed: HashSet<StageId>,
     running: HashSet<StageId>,

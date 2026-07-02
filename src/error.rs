@@ -36,6 +36,18 @@ pub enum AutoForgeError {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    #[error("message queue error: {0}")]
+    Queue(String),
+
+    #[error("slack error: {0}")]
+    Slack(String),
+
+    #[error("github error: {0}")]
+    GitHub(String),
+
+    #[error("store error: {0}")]
+    Store(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }
