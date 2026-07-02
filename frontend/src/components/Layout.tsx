@@ -3,6 +3,7 @@ import {
   Box,
   FolderGit2,
   GitPullRequest,
+  Image as ImageIcon,
   Layers,
   Sparkles,
   Upload,
@@ -24,6 +25,7 @@ export function Layout() {
   const nav = [
     { to: '/', label: '대시보드', icon: Layers },
     { to: '/new', label: '새 프로젝트', icon: Upload },
+    { to: '/images', label: '이미지 호스팅', icon: ImageIcon },
   ];
 
   return (

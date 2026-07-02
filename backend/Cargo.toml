@@ -35,7 +35,6 @@ sha2 = "0.10"
 hex = "0.4"
 dashmap = "6"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
-s3 = { version = "0.37.2", package = "rust-s3", default-features = false, features = ["tokio-rustls-tls"] }
 
 [profile.release]
 lto = "thin"

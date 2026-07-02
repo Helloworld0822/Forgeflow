@@ -3,8 +3,10 @@ import type {
   DailyLog,
   DailyLogSummary,
   HealthResponse,
+  HostedImage,
   Project,
   ProjectDetail,
+  UploadImageResponse,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
@@ -90,6 +92,28 @@ export async function listDailyLogs(
 
 export async function cancelProject(id: string): Promise<void> {
   await request(`/v1/projects/${id}/cancel`, { method: 'POST' });
+}
+
+export async function uploadImage(file: File): Promise<UploadImageResponse> {
+  const form = new FormData();
+  form.append('image', file);
+
+  const res = await fetch(`${API_BASE}/v1/images`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+
+  return res.json() as Promise<UploadImageResponse>;
+}
+
+export async function listImages(): Promise<HostedImage[]> {
+  return request<HostedImage[]>('/v1/images');
 }
 
 export function subscribeProjectStream(

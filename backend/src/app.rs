@@ -2,7 +2,7 @@ use crate::clients::github::GitHubClient;
 use crate::clients::slack::SlackNotifier;
 use crate::config::Config;
 use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
-use crate::services::artifacts::{ArtifactStore, S3ArtifactStore};
+use crate::services::artifacts::{ArtifactStore, LocalArtifactStore};
 use crate::services::orchestrator::DagScheduler;
 use crate::services::queue::MessageQueue;
 use crate::services::store::{MemoryStore, ProjectStore, RedisProjectStore};
@@ -14,6 +14,8 @@ pub struct App {
     pub config: Config,
     pub store: Arc<dyn ProjectStore>,
     pub artifacts: Arc<dyn ArtifactStore>,
+    /// 이미지 호스팅 기능 전용 (목록 조회 등 `ArtifactStore` 트레이트에 없는 기능 포함)
+    pub media: Arc<LocalArtifactStore>,
     pub cursor: Arc<crate::clients::cursor::CursorClient>,
     pub stitch: Arc<crate::clients::stitch::StitchClient>,
     pub queue: Option<Arc<MessageQueue>>,
@@ -53,22 +55,11 @@ impl App {
         let stitch = Arc::new(crate::clients::stitch::StitchClient::new(
             config.stitch_api_key.clone(),
         )?);
-        let artifacts: Arc<dyn ArtifactStore> = Arc::new(
-            S3ArtifactStore::connect(
-                &config.artifacts_endpoint,
-                &config.artifacts_bucket,
-                config.artifacts_access_key.as_deref(),
-                config.artifacts_secret_key.as_deref(),
-                &config.artifacts_region,
-            )
-            .await,
-        );
-        if !artifacts.is_durable() {
-            tracing::warn!(
-                "ARTIFACTS_ENDPOINT unreachable — running with in-memory artifact storage. \
-                 Distributed (worker/orchestrator split) and restart-safe deployments require MinIO/S3."
-            );
-        }
+        let media = Arc::new(LocalArtifactStore::new(
+            &config.artifacts_dir,
+            &config.public_url,
+        )?);
+        let artifacts: Arc<dyn ArtifactStore> = media.clone();
 
         let slack = slack.or_else(|| {
             if config.slack_enabled() {
@@ -94,6 +85,7 @@ impl App {
             config,
             store,
             artifacts,
+            media,
             cursor,
             stitch,
             queue,

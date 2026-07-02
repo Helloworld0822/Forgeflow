@@ -2,174 +2,124 @@ use crate::domain::ArtifactRef;
 use crate::error::{AutoForgeError, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use s3::bucket::Bucket;
-use s3::creds::Credentials;
-use s3::region::Region;
-use s3::BucketConfiguration;
+use std::path::{Component, Path, PathBuf};
 
 #[async_trait]
 pub trait ArtifactStore: Send + Sync {
     async fn put(&self, key: &str, data: Bytes, content_type: &str) -> Result<ArtifactRef>;
     async fn get(&self, key: &str) -> Result<Bytes>;
     fn uri_for(&self, key: &str) -> String;
-    /// 실제 원격 스토리지(S3/MinIO)에 연결되어 있는지 여부.
-    /// false면 프로세스 재시작/다중 인스턴스 환경에서 데이터가 유실될 수 있다.
+    /// 로컬 디스크에 저장되어 프로세스 재시작에도 보존되는지 여부.
+    /// 컨테이너 볼륨을 마운트하지 않은 경우에만 false가 될 수 있다.
     fn is_durable(&self) -> bool {
         true
     }
 }
 
-enum Backend {
-    S3(Box<Bucket>),
-    /// 개발용 인메모리 폴백. MinIO/S3에 연결할 수 없을 때만 사용되며
-    /// 프로세스 재시작 시 및 다중 인스턴스(worker/orchestrator 분리) 환경에서
-    /// 데이터가 공유/보존되지 않는다.
-    Memory(dashmap::DashMap<String, Bytes>),
+/// 파이프라인 산출물과 사용자가 업로드한 이미지를 로컬 디스크에 저장하는 스토어.
+///
+/// 별도의 S3/MinIO 같은 오브젝트 스토리지 없이도 동작하도록 설계되었다.
+/// `ARTIFACTS_DIR`에 파일을 그대로 저장하며, Compose/Podman 환경에서는 이 경로를
+/// 공유 볼륨으로 마운트해 api/worker/orchestrator 프로세스가 같은 파일을 보게 한다.
+pub struct LocalArtifactStore {
+    base_dir: PathBuf,
+    public_url: String,
 }
 
-pub struct S3ArtifactStore {
-    endpoint: String,
-    bucket_name: String,
-    backend: Backend,
+/// 이미지 호스팅 하위 디렉터리 (media/{filename})
+pub const MEDIA_DIR: &str = "media";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MediaEntry {
+    pub filename: String,
+    pub url: String,
+    pub size: u64,
+    pub uploaded_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl S3ArtifactStore {
-    /// 개발/테스트 전용 — 항상 인메모리로 동작한다.
-    pub fn new_memory(endpoint: impl Into<String>, bucket: impl Into<String>) -> Self {
-        Self {
-            endpoint: endpoint.into(),
-            bucket_name: bucket.into(),
-            backend: Backend::Memory(dashmap::DashMap::new()),
-        }
+impl LocalArtifactStore {
+    pub fn new(base_dir: impl Into<PathBuf>, public_url: impl Into<String>) -> Result<Self> {
+        let base_dir = base_dir.into();
+        std::fs::create_dir_all(&base_dir)
+            .map_err(|e| AutoForgeError::Artifacts(format!("cannot create {base_dir:?}: {e}")))?;
+        std::fs::create_dir_all(base_dir.join(MEDIA_DIR))
+            .map_err(|e| AutoForgeError::Artifacts(format!("cannot create media dir: {e}")))?;
+        Ok(Self {
+            base_dir,
+            public_url: public_url.into().trim_end_matches('/').to_string(),
+        })
     }
 
-    /// MinIO/S3 연결 시도 최대 대기 시간. 이 시간을 넘기면 인메모리 폴백으로 전환하여
-    /// 스토리지 장애가 서버 기동 자체를 무기한 블록하지 않도록 한다.
-    const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
-
-    /// MinIO/S3에 연결을 시도한다. 실패하거나 타임아웃되면 경고 로그를 남기고
-    /// 인메모리 폴백으로 동작한다.
-    pub async fn connect(
-        endpoint: &str,
-        bucket: &str,
-        access_key: Option<&str>,
-        secret_key: Option<&str>,
-        region: &str,
-    ) -> Self {
-        let attempt = tokio::time::timeout(
-            Self::CONNECT_TIMEOUT,
-            Self::try_connect(endpoint, bucket, access_key, secret_key, region),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(AutoForgeError::Artifacts(format!(
-                "connection attempt timed out after {:?}",
-                Self::CONNECT_TIMEOUT
-            )))
-        });
-
-        match attempt {
-            Ok(b) => {
-                tracing::info!(
-                    endpoint,
-                    bucket,
-                    "artifact store: connected to S3-compatible backend"
-                );
-                Self {
-                    endpoint: endpoint.into(),
-                    bucket_name: bucket.into(),
-                    backend: Backend::S3(b),
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    endpoint,
-                    bucket,
-                    error = %e,
-                    "artifact store: could not connect to S3/MinIO — falling back to in-memory \
-                     (NOT durable, NOT shared across processes — do not use in distributed/production mode)"
-                );
-                Self {
-                    endpoint: endpoint.into(),
-                    bucket_name: bucket.into(),
-                    backend: Backend::Memory(dashmap::DashMap::new()),
-                }
-            }
+    /// 키를 안전한 로컬 경로로 변환한다. `..` 등 경로 탈출 시도는 거부한다.
+    fn resolve(&self, key: &str) -> Result<PathBuf> {
+        if key.is_empty() {
+            return Err(AutoForgeError::BadRequest("empty artifact key".into()));
         }
-    }
-
-    async fn try_connect(
-        endpoint: &str,
-        bucket_name: &str,
-        access_key: Option<&str>,
-        secret_key: Option<&str>,
-        region: &str,
-    ) -> Result<Box<Bucket>> {
-        let region = Region::Custom {
-            region: region.to_string(),
-            endpoint: endpoint.to_string(),
-        };
-        let credentials = Credentials::new(access_key, secret_key, None, None, None)
-            .map_err(|e| AutoForgeError::Artifacts(format!("credentials: {e}")))?;
-
-        let bucket = Bucket::new(bucket_name, region.clone(), credentials.clone())
-            .map_err(|e| AutoForgeError::Artifacts(format!("bucket init: {e}")))?
-            .with_path_style();
-
-        let exists = bucket
-            .exists()
-            .await
-            .map_err(|e| AutoForgeError::Artifacts(format!("connectivity check: {e}")))?;
-
-        if exists {
-            return Ok(bucket);
-        }
-
-        match Bucket::create_with_path_style(
-            bucket_name,
-            region,
-            credentials,
-            BucketConfiguration::default(),
-        )
-        .await
+        let path = Path::new(key);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
         {
-            Ok(resp) if resp.response_code < 300 => Ok(resp.bucket.with_path_style()),
-            Ok(resp) => {
-                tracing::warn!(
-                    code = resp.response_code,
-                    body = %resp.response_text,
-                    "bucket create returned non-2xx, assuming it already exists"
-                );
-                Ok(bucket)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "bucket create failed, will attempt to use existing bucket");
-                Ok(bucket)
-            }
+            return Err(AutoForgeError::BadRequest(format!(
+                "invalid artifact key: {key}"
+            )));
         }
+        Ok(self.base_dir.join(path))
+    }
+
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
+    /// `media/` 하위에 업로드된 이미지 목록을 최신순으로 반환한다.
+    pub async fn list_media(&self) -> Result<Vec<MediaEntry>> {
+        let dir = self.base_dir.join(MEDIA_DIR);
+        let mut entries = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(&dir)
+            .await
+            .map_err(|e| AutoForgeError::Artifacts(format!("cannot list media dir: {e}")))?;
+
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
+            .map_err(|e| AutoForgeError::Artifacts(e.to_string()))?
+        {
+            let meta = match entry.metadata().await {
+                Ok(m) if m.is_file() => m,
+                _ => continue,
+            };
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let uploaded_at = meta
+                .modified()
+                .ok()
+                .map(chrono::DateTime::<chrono::Utc>::from)
+                .unwrap_or_else(chrono::Utc::now);
+            entries.push(MediaEntry {
+                url: format!("{}/media/{filename}", self.public_url),
+                filename,
+                size: meta.len(),
+                uploaded_at,
+            });
+        }
+
+        entries.sort_by_key(|e| std::cmp::Reverse(e.uploaded_at));
+        Ok(entries)
     }
 }
 
 #[async_trait]
-impl ArtifactStore for S3ArtifactStore {
+impl ArtifactStore for LocalArtifactStore {
     async fn put(&self, key: &str, data: Bytes, content_type: &str) -> Result<ArtifactRef> {
-        match &self.backend {
-            Backend::S3(bucket) => {
-                let resp = bucket
-                    .put_object_with_content_type(format!("/{key}"), &data, content_type)
-                    .await
-                    .map_err(|e| AutoForgeError::Artifacts(format!("put {key}: {e}")))?;
-                if resp.status_code() >= 300 {
-                    return Err(AutoForgeError::Artifacts(format!(
-                        "put {key} failed with status {}",
-                        resp.status_code()
-                    )));
-                }
-            }
-            Backend::Memory(cache) => {
-                cache.insert(key.to_string(), data);
-            }
+        let path = self.resolve(key)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AutoForgeError::Artifacts(format!("mkdir {parent:?}: {e}")))?;
         }
+        tokio::fs::write(&path, &data)
+            .await
+            .map_err(|e| AutoForgeError::Artifacts(format!("write {key}: {e}")))?;
 
         Ok(ArtifactRef {
             name: key.rsplit('/').next().unwrap_or(key).to_string(),
@@ -181,33 +131,55 @@ impl ArtifactStore for S3ArtifactStore {
     }
 
     async fn get(&self, key: &str) -> Result<Bytes> {
-        match &self.backend {
-            Backend::S3(bucket) => {
-                let resp = bucket
-                    .get_object(format!("/{key}"))
-                    .await
-                    .map_err(|e| AutoForgeError::Artifacts(format!("get {key}: {e}")))?;
-                if resp.status_code() >= 300 {
-                    return Err(AutoForgeError::Artifacts(format!(
-                        "not found: {key} (status {})",
-                        resp.status_code()
-                    )));
-                }
-                Ok(resp.bytes().clone())
-            }
-            Backend::Memory(cache) => cache
-                .get(key)
-                .map(|v| v.clone())
-                .ok_or_else(|| AutoForgeError::Artifacts(format!("not found: {key}"))),
-        }
+        let path = self.resolve(key)?;
+        let data = tokio::fs::read(&path)
+            .await
+            .map_err(|_| AutoForgeError::Artifacts(format!("not found: {key}")))?;
+        Ok(Bytes::from(data))
     }
 
     fn uri_for(&self, key: &str) -> String {
-        format!("{}/{}/{}", self.endpoint, self.bucket_name, key)
+        if let Some(filename) = key.strip_prefix(&format!("{MEDIA_DIR}/")) {
+            format!("{}/media/{filename}", self.public_url)
+        } else {
+            format!("{}/artifacts/{key}", self.public_url)
+        }
     }
+}
 
-    fn is_durable(&self) -> bool {
-        matches!(self.backend, Backend::S3(_))
+/// 파일 확장자로부터 이미지 MIME 타입을 추정한다. 매칭되는 확장자가 없으면
+/// `application/octet-stream`을 반환한다.
+pub fn guess_image_content_type(filename: &str) -> &'static str {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 매직 바이트로 이미지 파일 형식을 판별하고 확장자를 반환한다.
+/// 지원하지 않는 형식이면 `None`.
+pub fn detect_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else if bytes.starts_with(b"BM") {
+        Some("bmp")
+    } else if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") {
+        Some("svg")
+    } else {
+        None
     }
 }
 
@@ -215,22 +187,61 @@ impl ArtifactStore for S3ArtifactStore {
 mod tests {
     use super::*;
 
+    fn temp_store() -> LocalArtifactStore {
+        let dir = std::env::temp_dir().join(format!("autoforge-test-{}", uuid::Uuid::new_v4()));
+        LocalArtifactStore::new(dir, "http://localhost").unwrap()
+    }
+
     #[tokio::test]
-    async fn connect_falls_back_to_memory_when_unreachable_within_timeout() {
-        let start = std::time::Instant::now();
-        let store = S3ArtifactStore::connect(
-            "http://127.0.0.1:19999",
-            "test-bucket",
-            Some("minioadmin"),
-            Some("minioadmin"),
-            "us-east-1",
-        )
-        .await;
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < std::time::Duration::from_secs(15),
-            "connect() took too long: {elapsed:?}"
-        );
-        assert!(!store.is_durable());
+    async fn put_and_get_roundtrip() {
+        let store = temp_store();
+        let artifact = store
+            .put(
+                "projects/abc/plan.pdf",
+                Bytes::from_static(b"%PDF-1.4"),
+                "application/pdf",
+            )
+            .await
+            .unwrap();
+        assert_eq!(artifact.key, "projects/abc/plan.pdf");
+        assert_eq!(artifact.name, "plan.pdf");
+
+        let bytes = store.get("projects/abc/plan.pdf").await.unwrap();
+        assert_eq!(&bytes[..], b"%PDF-1.4");
+    }
+
+    #[tokio::test]
+    async fn rejects_path_traversal() {
+        let store = temp_store();
+        let result = store
+            .put(
+                "../../etc/passwd",
+                Bytes::from_static(b"evil"),
+                "text/plain",
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn media_uri_uses_media_route() {
+        let store = temp_store();
+        let artifact = store
+            .put(
+                "media/abc123.png",
+                Bytes::from_static(b"\x89PNG\r\n\x1a\n"),
+                "image/png",
+            )
+            .await
+            .unwrap();
+        assert_eq!(artifact.uri, "http://localhost/media/abc123.png");
+    }
+
+    #[test]
+    fn detects_common_image_formats() {
+        assert_eq!(detect_image_extension(b"\x89PNG\r\n\x1a\n"), Some("png"));
+        assert_eq!(detect_image_extension(b"\xff\xd8\xff\xe0"), Some("jpg"));
+        assert_eq!(detect_image_extension(b"GIF89a"), Some("gif"));
+        assert_eq!(detect_image_extension(b"not an image"), None);
     }
 }

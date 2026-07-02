@@ -16,7 +16,7 @@ const DEVOPS_ACCEPT =
 const DEVOPS_PLACEHOLDER = `# DevOps 계획서 예시
 
 ## 인프라
-- Docker Compose (nginx + api + redis + minio)
+- Docker Compose (nginx + api + redis)
 - Podman 호환
 
 ## CI/CD

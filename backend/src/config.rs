@@ -6,11 +6,10 @@ pub struct Config {
     pub port: u16,
     pub cursor_api_key: String,
     pub stitch_api_key: String,
-    pub artifacts_endpoint: String,
-    pub artifacts_bucket: String,
-    pub artifacts_access_key: Option<String>,
-    pub artifacts_secret_key: Option<String>,
-    pub artifacts_region: String,
+    /// 파이프라인 산출물 및 이미지 호스팅 파일을 저장할 로컬 디렉터리
+    pub artifacts_dir: String,
+    /// 업로드 이미지 최대 크기 (bytes, 기본 10MB)
+    pub max_image_bytes: usize,
     pub default_repo_url: Option<String>,
     pub max_debug_cycles: u8,
     /// Redis URL — 설정 시 MQ 모드 활성화
@@ -50,18 +49,11 @@ impl Config {
                 .unwrap_or(8080),
             cursor_api_key: env::var("CURSOR_API_KEY").unwrap_or_default(),
             stitch_api_key: env::var("STITCH_API_KEY").unwrap_or_default(),
-            artifacts_endpoint: env::var("ARTIFACTS_ENDPOINT")
-                .unwrap_or_else(|_| "http://localhost:9000".into()),
-            artifacts_bucket: env::var("ARTIFACTS_BUCKET").unwrap_or_else(|_| "autoforge".into()),
-            artifacts_access_key: env::var("ARTIFACTS_ACCESS_KEY")
+            artifacts_dir: env::var("ARTIFACTS_DIR").unwrap_or_else(|_| "./data/artifacts".into()),
+            max_image_bytes: env::var("MAX_IMAGE_BYTES")
                 .ok()
-                .or_else(|| env::var("MINIO_ROOT_USER").ok())
-                .or_else(|| Some("minioadmin".into())),
-            artifacts_secret_key: env::var("ARTIFACTS_SECRET_KEY")
-                .ok()
-                .or_else(|| env::var("MINIO_ROOT_PASSWORD").ok())
-                .or_else(|| Some("minioadmin".into())),
-            artifacts_region: env::var("ARTIFACTS_REGION").unwrap_or_else(|_| "us-east-1".into()),
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10 * 1024 * 1024),
             default_repo_url: env::var("DEFAULT_REPO_URL").ok(),
             max_debug_cycles: env::var("MAX_DEBUG_CYCLES")
                 .ok()

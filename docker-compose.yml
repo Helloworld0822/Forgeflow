@@ -7,10 +7,8 @@ version: "3.9"
 x-app-env: &app-env
   MESSAGE_QUEUE_ENABLED: "true"
   REDIS_URL: redis://redis:6379
-  ARTIFACTS_ENDPOINT: http://minio:9000
-  ARTIFACTS_BUCKET: autoforge
-  ARTIFACTS_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-  ARTIFACTS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  ARTIFACTS_DIR: /data/artifacts
+  MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
   CURSOR_API_KEY: ${CURSOR_API_KEY:-}
   STITCH_API_KEY: ${STITCH_API_KEY:-}
   SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
@@ -73,10 +71,10 @@ services:
       PORT: "8080"
     expose:
       - "8080"
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -97,10 +95,10 @@ services:
     environment:
       <<: *app-env
       ORCHESTRATOR_ID: orchestrator-1
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     restart: unless-stopped
     <<: *worker-limits
@@ -110,10 +108,10 @@ services:
     command: ["worker"]
     environment:
       <<: *app-env
+    volumes:
+      - artifacts-data:/data/artifacts
     depends_on:
       redis:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     restart: unless-stopped
     <<: *worker-limits
@@ -133,30 +131,8 @@ services:
           cpus: "0.5"
           memory: 256M
 
-  minio:
-    image: docker.io/minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    # 운영 환경에서는 9000/9001 포트를 외부에 공개하지 말고 내부망(nginx/api)에서만
-    # 접근하도록 이 매핑을 제거하세요.
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-
 volumes:
   redis-data:
-  minio-data:
+  # api/worker/orchestrator가 공유하는 아티팩트/이미지 저장소.
+  # 단일 호스트를 넘어 여러 노드에 분산 배포하려면 NFS 등 네트워크 파일시스템으로 교체하세요.
+  artifacts-data:

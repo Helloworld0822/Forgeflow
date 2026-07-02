@@ -3,6 +3,9 @@ use crate::domain::{
     DailyLogSummary, DevopsPlanInput, PipelineState, ProjectDetailView, ProjectView, StageState,
 };
 use crate::error::{AutoForgeError, Result};
+use crate::services::artifacts::{
+    detect_image_extension, guess_image_content_type, ArtifactStore, MEDIA_DIR,
+};
 use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::{run_inline, start_project_mq};
 use actix_multipart::Multipart;
@@ -306,4 +309,91 @@ pub async fn get_daily_log(
         .ok_or_else(|| AutoForgeError::NotFound(format!("daily log {date}")))?;
 
     Ok(HttpResponse::Ok().json(log))
+}
+
+/// 이미지 업로드 (multipart, 필드명: `image` 또는 `file`).
+/// 매직 바이트로 이미지 형식을 확인하고 `media/{uuid}.{ext}`로 저장한 뒤
+/// 바로 접근 가능한 공개 URL을 반환한다.
+pub async fn upload_image(
+    app: web::Data<Arc<App>>,
+    mut payload: Multipart,
+) -> Result<HttpResponse> {
+    let max_bytes = app.config.max_image_bytes;
+
+    while let Some(field) = payload
+        .try_next()
+        .await
+        .map_err(|e| AutoForgeError::BadRequest(e.to_string()))?
+    {
+        let field_name = field
+            .content_disposition()
+            .and_then(|d| d.get_name().map(String::from))
+            .unwrap_or_default();
+
+        if field_name != "image" && field_name != "file" {
+            continue;
+        }
+
+        let mut data = Vec::new();
+        let mut field = field;
+        while let Some(chunk) = field.next().await {
+            let chunk = chunk.map_err(|e| AutoForgeError::BadRequest(e.to_string()))?;
+            if data.len() + chunk.len() > max_bytes {
+                return Err(AutoForgeError::BadRequest(format!(
+                    "image too large (limit: {max_bytes} bytes)"
+                )));
+            }
+            data.extend_from_slice(&chunk);
+        }
+
+        let ext = detect_image_extension(&data).ok_or_else(|| {
+            AutoForgeError::BadRequest(
+                "unsupported or invalid image (png/jpg/gif/webp/bmp/svg만 지원)".into(),
+            )
+        })?;
+
+        let filename = format!("{}.{ext}", Uuid::new_v4());
+        let key = format!("{MEDIA_DIR}/{filename}");
+        let content_type = guess_image_content_type(&filename);
+        let artifact = app.media.put(&key, data.into(), content_type).await?;
+
+        return Ok(HttpResponse::Created().json(serde_json::json!({
+            "filename": filename,
+            "url": artifact.uri,
+            "content_type": content_type,
+        })));
+    }
+
+    Err(AutoForgeError::BadRequest(
+        "image file required (field: image)".into(),
+    ))
+}
+
+/// 업로드된 이미지 목록 (최신순)
+pub async fn list_images(app: web::Data<Arc<App>>) -> Result<HttpResponse> {
+    let images = app.media.list_media().await?;
+    Ok(HttpResponse::Ok().json(images))
+}
+
+/// 업로드된 이미지를 직접 서빙한다 (인증 불필요 — 외부 공유/임베드 목적).
+pub async fn serve_media(
+    path: web::Path<String>,
+    app: web::Data<Arc<App>>,
+) -> Result<HttpResponse> {
+    let filename = path.into_inner();
+    if filename.contains('/') || filename.contains("..") {
+        return Err(AutoForgeError::BadRequest("invalid filename".into()));
+    }
+    let key = format!("{MEDIA_DIR}/{filename}");
+    let bytes = app
+        .artifacts
+        .get(&key)
+        .await
+        .map_err(|_| AutoForgeError::NotFound(format!("image {filename}")))?;
+    let content_type = guess_image_content_type(&filename);
+
+    Ok(HttpResponse::Ok()
+        .content_type(content_type)
+        .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+        .body(bytes))
 }
