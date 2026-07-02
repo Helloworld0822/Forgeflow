@@ -180,6 +180,24 @@ pub struct StageCompleted {
     pub output_artifacts: Vec<ArtifactRef>,
 }
 
+/// DevOps 계획서 입력 (파일 또는 직접 작성)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DevopsPlanInput {
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+impl DevopsPlanInput {
+    pub fn has_content(&self) -> bool {
+        self.bytes.as_ref().is_some_and(|b| !b.is_empty())
+            || self.text.as_ref().is_some_and(|t| !t.trim().is_empty())
+    }
+}
+
 /// 런타임 프로젝트 엔티티
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -190,6 +208,9 @@ pub struct Project {
     pub stages: HashMap<StageId, StageState>,
     pub scheduler: DagScheduler,
     pub pdf_bytes: Option<Vec<u8>>,
+    /// DevOps 계획서 (CI/CD, 인프라, 배포 파이프라인 등)
+    #[serde(default)]
+    pub devops_plan: Option<DevopsPlanInput>,
     /// 스테이지별 메타데이터 (pr_url, verify_report 등)
     pub stage_outputs: HashMap<StageId, serde_json::Value>,
     /// 누적 산출물 참조
@@ -229,6 +250,7 @@ pub struct ProjectView {
     pub pr_url: Option<String>,
     pub merge_status: Option<String>,
     pub github_repo: Option<String>,
+    pub has_devops_plan: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -277,6 +299,7 @@ impl From<&Project> for ProjectView {
             pr_url,
             merge_status,
             github_repo,
+            has_devops_plan: p.devops_plan.as_ref().is_some_and(|d| d.has_content()),
             created_at: Utc::now(),
         }
     }

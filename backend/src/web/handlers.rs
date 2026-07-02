@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::domain::{PipelineState, ProjectDetailView, ProjectView, StageState};
+use crate::domain::{DevopsPlanInput, PipelineState, ProjectDetailView, ProjectView, StageState};
 use crate::error::{AutoForgeError, Result};
 use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::{run_inline, start_project_mq};
@@ -43,6 +43,7 @@ pub async fn create_project(
     let mut name: Option<String> = None;
     let mut repo_url: Option<String> = None;
     let mut pdf_bytes: Option<Vec<u8>> = None;
+    let mut devops_plan = DevopsPlanInput::default();
 
     while let Some(field) = payload
         .try_next()
@@ -54,6 +55,11 @@ pub async fn create_project(
             .and_then(|d| d.get_name().map(String::from))
             .unwrap_or_default();
 
+        let field_filename = field
+            .content_disposition()
+            .and_then(|d| d.get_filename().map(String::from));
+        let field_content_type = field.content_type().map(|m| m.to_string());
+
         let mut data = Vec::new();
         let mut field = field;
         while let Some(chunk) = field.next().await {
@@ -64,6 +70,14 @@ pub async fn create_project(
         match field_name.as_str() {
             "name" => name = Some(String::from_utf8_lossy(&data).to_string()),
             "repo_url" => repo_url = Some(String::from_utf8_lossy(&data).to_string()),
+            "devops_plan_text" | "devops_text" => {
+                devops_plan.text = Some(String::from_utf8_lossy(&data).to_string());
+            }
+            "devops_plan" | "devops" | "devops_file" => {
+                devops_plan.bytes = Some(data);
+                devops_plan.filename = field_filename;
+                devops_plan.content_type = field_content_type;
+            }
             "plan" | "pdf" | "file" => pdf_bytes = Some(data),
             _ => {}
         }
@@ -78,6 +92,9 @@ pub async fn create_project(
 
     let mut project = app.create_project(name, repo_url).await;
     project.pdf_bytes = Some(pdf);
+    if devops_plan.has_content() {
+        project.devops_plan = Some(devops_plan);
+    }
 
     // GitHub 프라이빗 레포 자동 생성 (repo_url 미지정 시)
     if project.repo_url.is_none() {
@@ -119,6 +136,7 @@ pub async fn create_project(
             .and_then(|m| m.get("auto_created"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        "has_devops_plan": project.devops_plan.as_ref().is_some_and(|d| d.has_content()),
     })))
 }
 

@@ -423,6 +423,62 @@ input {
   color: var(--muted);
 }
 
+.upload-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  resize: vertical;
+  min-height: 160px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.section-desc {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.dropzone.compact {
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.btn.small {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.alert.info {
+  background: rgba(108, 158, 255, 0.1);
+  border: 1px solid rgba(108, 158, 255, 0.3);
+  color: var(--accent);
+}
+
+.badge.devops {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.4);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .upload-form input[type='text'],
 .upload-form input[type='url'] {
   display: block;

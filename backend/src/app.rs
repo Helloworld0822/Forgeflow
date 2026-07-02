@@ -103,6 +103,7 @@ impl App {
                 .collect(),
             scheduler: DagScheduler::with_quality(id, self.config.max_debug_cycles),
             pdf_bytes: None,
+            devops_plan: None,
             stage_outputs: HashMap::new(),
             accumulated_artifacts: Vec::new(),
             slack_message_ts: None,

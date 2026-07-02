@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   FolderGit2,
   Loader2,
+  Server,
   StopCircle,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -71,6 +72,11 @@ export function ProjectDetailPage() {
             <span className={`badge state-${project.state}`}>
               {stateLabel[project.state] ?? project.state}
             </span>
+            {project.has_devops_plan && (
+              <span className="badge devops">
+                <Server size={12} /> DevOps
+              </span>
+            )}
             <span className="badge muted">{project.id.slice(0, 8)}</span>
           </div>
         </div>

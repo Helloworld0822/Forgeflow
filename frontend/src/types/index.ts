@@ -28,6 +28,7 @@ export interface Project {
   pr_url: string | null;
   merge_status: string | null;
   github_repo: string | null;
+  has_devops_plan: boolean;
   created_at: string;
 }
 
@@ -44,6 +45,7 @@ export interface CreateProjectResponse {
   stream_url: string;
   progress_percent: number;
   github_auto_created: boolean;
+  has_devops_plan: boolean;
 }
 
 export interface HealthResponse {

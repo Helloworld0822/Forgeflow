@@ -16,6 +16,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface CreateProjectOptions {
+  name?: string;
+  repoUrl?: string;
+  devopsPlanText?: string;
+  devopsPlanFile?: File | null;
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/health');
 }
@@ -29,14 +36,19 @@ export async function getProject(id: string): Promise<ProjectDetail> {
 }
 
 export async function createProject(
-  file: File,
-  name?: string,
-  repoUrl?: string,
+  planFile: File,
+  options: CreateProjectOptions = {},
 ): Promise<CreateProjectResponse> {
   const form = new FormData();
-  form.append('plan', file);
-  if (name) form.append('name', name);
-  if (repoUrl) form.append('repo_url', repoUrl);
+  form.append('plan', planFile);
+  if (options.name) form.append('name', options.name);
+  if (options.repoUrl) form.append('repo_url', options.repoUrl);
+  if (options.devopsPlanText?.trim()) {
+    form.append('devops_plan_text', options.devopsPlanText.trim());
+  }
+  if (options.devopsPlanFile) {
+    form.append('devops_plan', options.devopsPlanFile);
+  }
 
   const res = await fetch(`${API_BASE}/v1/projects`, {
     method: 'POST',

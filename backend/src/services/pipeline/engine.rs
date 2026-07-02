@@ -143,10 +143,11 @@ pub fn apply_stage_output(
     Ok(PipelineOutcome::Continue)
 }
 
-pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()> {
+pub async fn prepare_project_inputs(app: &App, project: &mut Project) -> Result<()> {
     let project_id = project.id.0;
-    let pdf_key = format!("projects/{project_id}/plan.pdf");
+
     if let Some(pdf) = &project.pdf_bytes {
+        let pdf_key = format!("projects/{project_id}/plan.pdf");
         app.artifacts
             .put(pdf_key.as_str(), Bytes::from(pdf.clone()), "application/pdf")
             .await?;
@@ -159,7 +160,56 @@ pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()>
             });
         }
     }
+
+    if let Some(devops) = &project.devops_plan {
+        if devops.has_content() {
+            let storage_name = devops_storage_name(devops);
+            let key = format!("projects/{project_id}/{storage_name}");
+
+            let (bytes, content_type) = if let Some(b) = &devops.bytes {
+                (
+                    Bytes::from(b.clone()),
+                    devops
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".into()),
+                )
+            } else if let Some(text) = &devops.text {
+                if text.trim().is_empty() {
+                    return Ok(());
+                }
+                (Bytes::from(text.clone()), "text/markdown".into())
+            } else {
+                return Ok(());
+            };
+
+            app.artifacts.put(key.as_str(), bytes, &content_type).await?;
+            project.accumulated_artifacts.push(ArtifactRef {
+                name: storage_name.clone(),
+                uri: app.artifacts.uri_for(&key),
+                content_type,
+                sha256: None,
+            });
+        }
+    }
+
     Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()> {
+    prepare_project_inputs(app, project).await
+}
+
+fn devops_storage_name(devops: &crate::domain::DevopsPlanInput) -> String {
+    if let Some(name) = &devops.filename {
+        if name.starts_with("devops_plan") {
+            return name.clone();
+        }
+        let ext = name.rsplit('.').next().unwrap_or("md");
+        return format!("devops_plan.{ext}");
+    }
+    "devops_plan.md".into()
 }
 
 #[derive(Debug)]

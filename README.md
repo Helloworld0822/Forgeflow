@@ -80,13 +80,23 @@ export GITHUB_AUTO_MERGE=true   # 기본값
 | Method | Path | 설명 |
 |--------|------|------|
 | GET | `/health` | 헬스체크 |
-| POST | `/v1/projects` | PDF 업로드 + 파이프라인 시작 |
+| POST | `/v1/projects` | PDF 업로드 + DevOps 계획서(선택) + 파이프라인 시작 |
 | GET | `/v1/projects` | 프로젝트 목록 |
 | GET | `/v1/projects/{id}` | 프로젝트 상세 |
 | GET | `/v1/projects/{id}/stream` | SSE 진행률 |
 | POST | `/v1/projects/{id}/cancel` | 취소 |
 
 Compose 환경에서는 nginx가 `/v1`, `/health`를 `api:8080`으로 프록시합니다.
+
+### 프로젝트 생성 (multipart)
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `plan` | ✅ | PDF 외주 계획서 |
+| `devops_plan_text` | — | DevOps 계획서 직접 작성 (Markdown/YAML) |
+| `devops_plan` | — | DevOps 계획서 파일 (.md, .yaml, .yml, .txt, .pdf) |
+| `name` | — | 프로젝트 이름 |
+| `repo_url` | — | GitHub 레포 URL |
 
 ## 환경 변수
 
