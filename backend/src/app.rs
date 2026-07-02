@@ -1,11 +1,11 @@
+use crate::clients::github::GitHubClient;
+use crate::clients::slack::SlackNotifier;
 use crate::config::Config;
 use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, S3ArtifactStore};
 use crate::services::orchestrator::DagScheduler;
 use crate::services::queue::MessageQueue;
 use crate::services::store::{MemoryStore, ProjectStore, RedisProjectStore};
-use crate::clients::slack::SlackNotifier;
-use crate::clients::github::GitHubClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,9 +23,9 @@ pub struct App {
 
 impl App {
     /// 인메모리 모드 (단일 프로세스, MQ 없음)
-    pub fn new(config: Config) -> crate::Result<Self> {
+    pub async fn new(config: Config) -> crate::Result<Self> {
         let store: Arc<dyn ProjectStore> = Arc::new(MemoryStore::new());
-        Self::build(config, store, None, None)
+        Self::build(config, store, None, None).await
     }
 
     /// Redis MQ 모드 (Podman 멀티 컨테이너)
@@ -38,10 +38,10 @@ impl App {
         } else {
             None
         };
-        Self::build(config, store, queue, slack)
+        Self::build(config, store, queue, slack).await
     }
 
-    fn build(
+    async fn build(
         config: Config,
         store: Arc<dyn ProjectStore>,
         queue: Option<Arc<MessageQueue>>,
@@ -53,10 +53,22 @@ impl App {
         let stitch = Arc::new(crate::clients::stitch::StitchClient::new(
             config.stitch_api_key.clone(),
         )?);
-        let artifacts: Arc<dyn ArtifactStore> = Arc::new(S3ArtifactStore::new(
-            &config.artifacts_endpoint,
-            &config.artifacts_bucket,
-        ));
+        let artifacts: Arc<dyn ArtifactStore> = Arc::new(
+            S3ArtifactStore::connect(
+                &config.artifacts_endpoint,
+                &config.artifacts_bucket,
+                config.artifacts_access_key.as_deref(),
+                config.artifacts_secret_key.as_deref(),
+                &config.artifacts_region,
+            )
+            .await,
+        );
+        if !artifacts.is_durable() {
+            tracing::warn!(
+                "ARTIFACTS_ENDPOINT unreachable — running with in-memory artifact storage. \
+                 Distributed (worker/orchestrator split) and restart-safe deployments require MinIO/S3."
+            );
+        }
 
         let slack = slack.or_else(|| {
             if config.slack_enabled() {
