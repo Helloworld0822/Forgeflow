@@ -28,11 +28,31 @@ export interface Project {
   pr_url: string | null;
   merge_status: string | null;
   github_repo: string | null;
+  has_devops_plan: boolean;
   created_at: string;
 }
 
 export interface ProjectDetail extends Project {
   stage_outputs: Record<string, unknown>;
+}
+
+export interface DailyLogSummary {
+  date: string;
+  day_number: number;
+  entry_count: number;
+  progress_percent: number;
+  updated_at: string;
+}
+
+export interface DailyLog extends DailyLogSummary {
+  entries: {
+    at: string;
+    event: string;
+    stage?: string;
+    message: string;
+    progress_percent: number;
+  }[];
+  markdown: string;
 }
 
 export interface CreateProjectResponse {
@@ -44,6 +64,7 @@ export interface CreateProjectResponse {
   stream_url: string;
   progress_percent: number;
   github_auto_created: boolean;
+  has_devops_plan: boolean;
 }
 
 export interface HealthResponse {

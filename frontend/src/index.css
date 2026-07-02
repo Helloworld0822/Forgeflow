@@ -423,6 +423,136 @@ input {
   color: var(--muted);
 }
 
+.upload-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  resize: vertical;
+  min-height: 160px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  margin-bottom: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.section-desc {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.dropzone.compact {
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.btn.small {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.alert.info {
+  background: rgba(108, 158, 255, 0.1);
+  border: 1px solid rgba(108, 158, 255, 0.3);
+  color: var(--accent);
+}
+
+.badge.devops {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.4);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.daily-log-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 1rem;
+  min-height: 280px;
+}
+
+.daily-log-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.daily-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.65rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  transition: border-color 0.15s;
+}
+
+.daily-tab:hover,
+.daily-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.daily-tab-day {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.daily-tab-date {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.daily-tab-meta {
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+
+.daily-log-content {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow: auto;
+  max-height: 480px;
+}
+
+.markdown-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .daily-log-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .upload-form input[type='text'],
 .upload-form input[type='url'] {
   display: block;

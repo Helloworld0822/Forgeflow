@@ -3,7 +3,7 @@ use crate::clients::stitch::StitchClient;
 use crate::domain::{ArtifactRef, ModelProfile, StageCommand, StageId};
 use crate::error::{AutoForgeError, Result};
 use crate::services::artifacts::ArtifactStore;
-use crate::services::ingest::ingest_pdf;
+use crate::services::ingest::{ingest_devops_plan, ingest_pdf};
 use crate::services::quality::{
     DebugReport, SecurityReport, VerifyReport, SECURITY_CHECKS, VERIFY_CHECKS,
 };
@@ -47,7 +47,8 @@ impl StageExecutor for IngestExecutor {
         let pdf_ref = ctx
             .input
             .iter()
-            .find(|a| a.name.ends_with(".pdf"))
+            .find(|a| a.name.ends_with(".pdf") && !a.name.contains("devops"))
+            .or_else(|| ctx.input.iter().find(|a| a.name == "plan.pdf"))
             .ok_or_else(|| AutoForgeError::Ingest("missing PDF input".into()))?;
 
         let bytes = ctx.artifacts.get(&pdf_ref.name).await?;
@@ -63,10 +64,45 @@ impl StageExecutor for IngestExecutor {
             )
             .await?;
 
-        let meta = serde_json::json!({
+        let mut meta = serde_json::json!({
             "page_count": result.page_count,
             "sha256": result.sha256,
+            "has_devops_plan": false,
         });
+
+        let mut artifacts = vec![text_uri.clone()];
+
+        // DevOps 계획서 ingest (선택)
+        let devops_ref = ctx
+            .input
+            .iter()
+            .find(|a| a.name.starts_with("devops_plan"));
+
+        if let Some(devops_ref) = devops_ref {
+            let devops_bytes = ctx.artifacts.get(&devops_ref.name).await?;
+            let devops_input = crate::domain::DevopsPlanInput {
+                filename: Some(devops_ref.name.clone()),
+                content_type: Some(devops_ref.content_type.clone()),
+                bytes: Some(devops_bytes.to_vec()),
+                text: None,
+            };
+            if let Ok(devops) = ingest_devops_plan(&devops_input) {
+                let devops_uri = ctx
+                    .artifacts
+                    .put(
+                        &format!("{base}/devops_raw_text.md"),
+                        Bytes::from(devops.raw_text.clone()),
+                        "text/markdown",
+                    )
+                    .await?;
+                artifacts.push(devops_uri);
+                meta["has_devops_plan"] = serde_json::json!(true);
+                meta["devops_format"] = serde_json::json!(devops.format);
+                meta["devops_source"] = serde_json::json!(devops.source);
+                meta["devops_sha256"] = serde_json::json!(devops.sha256);
+            }
+        }
+
         let meta_uri = ctx
             .artifacts
             .put(
@@ -76,8 +112,10 @@ impl StageExecutor for IngestExecutor {
             )
             .await?;
 
+        artifacts.push(meta_uri);
+
         Ok(StageOutput {
-            artifacts: vec![text_uri, meta_uri],
+            artifacts,
             metadata: meta,
         })
     }
@@ -481,18 +519,33 @@ pub fn executors() -> Vec<Arc<dyn StageExecutor>> {
 }
 
 fn build_summarize_prompt(inputs: &[ArtifactRef]) -> String {
+    let has_devops = inputs.iter().any(|a| a.name.starts_with("devops_plan"));
+    let devops_note = if has_devops {
+        "DevOps 계획서(devops_plan*)가 포함되어 있습니다. devops_requirements, infrastructure, ci_cd 필드를 반드시 채우세요.\n"
+    } else {
+        ""
+    };
     format!(
         "다음 외주 계획서를 분석하여 strict JSON으로 요약하세요.\n\
-         필드: title, goals[], scope, constraints[], tech_hints[], ui_requirements[], timeline, budget_hint\n\
+         필드: title, goals[], scope, constraints[], tech_hints[], ui_requirements[], \
+         devops_requirements[], infrastructure[], ci_cd[], timeline, budget_hint\n\
+         {devops_note}\
          입력 아티팩트: {:?}",
         inputs.iter().map(|a| &a.uri).collect::<Vec<_>>()
     )
 }
 
 fn build_architect_prompt(inputs: &[ArtifactRef]) -> String {
+    let has_devops = inputs.iter().any(|a| a.name.starts_with("devops_plan"));
+    let devops_note = if has_devops {
+        "DevOps 계획서를 반영하여 infrastructure.md, cicd_pipeline.md, deploy_manifest.yaml 초안도 포함하세요.\n"
+    } else {
+        ""
+    };
     format!(
         "summary.json을 기반으로 시스템 아키텍처(architecture.md)와 상세 기획(spec.md), \
          구현 태스크 DAG(tasks.json)를 작성하세요.\n\
+         {devops_note}\
          입력: {:?}",
         inputs.iter().map(|a| &a.uri).collect::<Vec<_>>()
     )
@@ -507,8 +560,16 @@ fn build_design_prompt(inputs: &[ArtifactRef]) -> String {
 }
 
 fn build_implement_prompt(inputs: &[ArtifactRef]) -> String {
+    let has_devops = inputs.iter().any(|a| a.name.starts_with("devops_plan"));
+    let devops_note = if has_devops {
+        "DevOps 계획서에 따라 Dockerfile, docker-compose.yml, CI/CD 워크플로우(.github/workflows), \
+         nginx/인프라 설정을 구현하세요. 배포 자동화를 포함하세요.\n"
+    } else {
+        ""
+    };
     format!(
         "tasks.json 순서대로 구현하세요. design/screens/ 의 Stitch HTML을 UI 참고로 사용하세요.\n\
+         {devops_note}\
          입력: {:?}",
         inputs.iter().map(|a| &a.uri).collect::<Vec<_>>()
     )

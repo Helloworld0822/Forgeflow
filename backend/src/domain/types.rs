@@ -180,6 +180,69 @@ pub struct StageCompleted {
     pub output_artifacts: Vec<ArtifactRef>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyLogEntry {
+    pub at: DateTime<Utc>,
+    pub event: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<StageId>,
+    pub message: String,
+    pub progress_percent: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyLog {
+    pub date: String,
+    pub day_number: u32,
+    pub entries: Vec<DailyLogEntry>,
+    pub markdown: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyLogSummary {
+    pub date: String,
+    pub day_number: u32,
+    pub entry_count: usize,
+    pub progress_percent: u8,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<&DailyLog> for DailyLogSummary {
+    fn from(log: &DailyLog) -> Self {
+        let progress = log.entries.last().map(|e| e.progress_percent).unwrap_or(0);
+        Self {
+            date: log.date.clone(),
+            day_number: log.day_number,
+            entry_count: log.entries.len(),
+            progress_percent: progress,
+            updated_at: log.updated_at,
+        }
+    }
+}
+
+fn default_created_at() -> DateTime<Utc> {
+    Utc::now()
+}
+
+/// DevOps 계획서 입력 (파일 또는 직접 작성)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DevopsPlanInput {
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+impl DevopsPlanInput {
+    pub fn has_content(&self) -> bool {
+        self.bytes.as_ref().is_some_and(|b| !b.is_empty())
+            || self.text.as_ref().is_some_and(|t| !t.trim().is_empty())
+    }
+}
+
 /// 런타임 프로젝트 엔티티
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -190,6 +253,9 @@ pub struct Project {
     pub stages: HashMap<StageId, StageState>,
     pub scheduler: DagScheduler,
     pub pdf_bytes: Option<Vec<u8>>,
+    /// DevOps 계획서 (CI/CD, 인프라, 배포 파이프라인 등)
+    #[serde(default)]
+    pub devops_plan: Option<DevopsPlanInput>,
     /// 스테이지별 메타데이터 (pr_url, verify_report 등)
     pub stage_outputs: HashMap<StageId, serde_json::Value>,
     /// 누적 산출물 참조
@@ -197,6 +263,11 @@ pub struct Project {
     /// Slack 진행 메시지 ts (업데이트용)
     #[serde(default)]
     pub slack_message_ts: Option<String>,
+    #[serde(default = "default_created_at")]
+    pub created_at: DateTime<Utc>,
+    /// 일별 경과 로그 (YYYY-MM-DD → DailyLog)
+    #[serde(default)]
+    pub daily_logs: HashMap<String, DailyLog>,
 }
 
 impl Project {
@@ -229,6 +300,8 @@ pub struct ProjectView {
     pub pr_url: Option<String>,
     pub merge_status: Option<String>,
     pub github_repo: Option<String>,
+    pub has_devops_plan: bool,
+    pub daily_log_count: usize,
     pub created_at: DateTime<Utc>,
 }
 
@@ -277,7 +350,9 @@ impl From<&Project> for ProjectView {
             pr_url,
             merge_status,
             github_repo,
-            created_at: Utc::now(),
+            has_devops_plan: p.devops_plan.as_ref().is_some_and(|d| d.has_content()),
+            daily_log_count: p.daily_logs.len(),
+            created_at: p.created_at,
         }
     }
 }

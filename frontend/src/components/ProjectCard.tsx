@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, FolderGit2, GitPullRequest } from 'lucide-react';
+import { ArrowRight, FolderGit2, GitPullRequest, Server } from 'lucide-react';
 import type { Project } from '../types';
 
 const stateLabel: Record<string, string> = {
@@ -48,6 +48,12 @@ export function ProjectCard({ project }: { project: Project }) {
         )}
         {project.merge_status === 'merged' && (
           <span className="meta-chip success">Merged</span>
+        )}
+        {project.has_devops_plan && (
+          <span className="meta-chip">
+            <Server size={14} />
+            DevOps
+          </span>
         )}
       </div>
     </Link>

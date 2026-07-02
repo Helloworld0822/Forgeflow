@@ -5,28 +5,21 @@ AutoForge를 **Podman** 컨테이너로 분산 실행합니다. API, Orchestrato
 ## 아키텍처
 
 ```
-                    ┌─────────────┐
-                    │   Podman    │
-                    │   Network   │
-                    └──────┬──────┘
-           ┌───────────────┼───────────────┐
-           │               │               │
-      ┌────▼────┐    ┌─────▼─────┐   ┌─────▼─────┐
-      │   API   │    │Orchestrator│   │ Worker xN │
-      │  :8080  │    │  (events)  │   │ (commands)│
-      └────┬────┘    └─────┬─────┘   └─────┬─────┘
-           │               │               │
-           └───────────────┼───────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │    Redis    │
-                    │  Streams MQ │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │    MinIO    │
-                    └─────────────┘
+  브라우저 ──► nginx:80 ──┬── / (React SPA)
+                          ├── /v1/* ──► api:8080
+                          └── /health ──► api:8080
+
+  api / orchestrator / worker ──► Redis Streams MQ ──► MinIO
 ```
+
+| 서비스 | 역할 |
+|--------|------|
+| **nginx** | 프론트엔드 정적 파일 + API 리버스 프록시 |
+| **api** | Rust REST API (`backend/`) |
+| **orchestrator** | 이벤트 소비 → 다음 스테이지 enqueue |
+| **worker** | 커맨드 소비 → 스테이지 실행 (수평 확장) |
+| **redis** | MQ + 프로젝트 상태 |
+| **minio** | 아티팩트 저장소 |
 
 ## 메시지 큐 최적화
 
@@ -44,28 +37,29 @@ AutoForge를 **Podman** 컨테이너로 분산 실행합니다. API, Orchestrato
 ## 빠른 시작
 
 ```bash
-# 환경 변수 (.env)
-export CURSOR_API_KEY=...
-export STITCH_API_KEY=...
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...  # 선택
+cp .env.example .env
+# .env 편집
 
-# 빌드 + 실행
-chmod +x scripts/podman-up.sh
-./scripts/podman-up.sh
+chmod +x scripts/compose-up.sh scripts/podman-up.sh
+./scripts/compose-up.sh
+# Podman: ./scripts/podman-up.sh
 ```
 
 또는 수동:
 
 ```bash
-podman build -t localhost/autoforge:latest -f Containerfile .
-podman-compose -f podman-compose.yml up -d
+docker compose up -d --build --scale worker=3
+# Podman: podman-compose -f podman-compose.yml up -d --build --scale worker=3
 ```
+
+접속: **http://localhost** (nginx)
 
 ## 프로세스 역할
 
 | 컨테이너 | 명령 | 역할 |
 |----------|------|------|
-| `api` | `serve` | REST API + 웹 UI |
+| `nginx` | — | React SPA + API 프록시 (:80) |
+| `api` | `serve` | REST API (`backend/`) |
 | `orchestrator` | `orchestrate` | 이벤트 소비 → 다음 스테이지 enqueue |
 | `worker` | `worker` | 커맨드 소비 → 스테이지 실행 |
 
@@ -76,7 +70,7 @@ podman-compose -f podman-compose.yml up -d
 podman-compose -f podman-compose.yml up -d --scale worker=5
 
 # 특정 스테이지만 처리
-podman run --rm -e STAGE_FILTER=implement localhost/autoforge:latest worker
+podman run --rm -e STAGE_FILTER=implement localhost/autoforge-api:latest worker
 ```
 
 ## Slack 진행률 알림

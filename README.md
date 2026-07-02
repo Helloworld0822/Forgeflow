@@ -1,147 +1,113 @@
 # AutoForge — AI 외주 자동화 프로그램
 
-PDF 계획서를 업로드하면 **요약(Sonnet) → 기획(Fable) → 디자인(Stitch) → 구현(Codex 5.3)** 파이프라인이 자동 실행되는 **단일 실행형 Rust 프로그램**입니다.
+PDF 계획서를 업로드하면 **요약(Sonnet) → 기획(Fable) → 디자인(Stitch) → 구현(Codex 5.3)** 파이프라인이 자동 실행됩니다.
 
-웹 UI는 **Actix-web** 기반으로 제공됩니다.
-
-## 모델 역할
-
-| 단계 | 모델 | 역할 |
-|------|------|------|
-| Summarize | `claude-4.6-sonnet-high-thinking` | PDF 계획서 구조화 요약 |
-| Architect | `claude-fable-5-thinking-high` | 시스템 아키텍처 + 상세 기획 |
-| Design | Google Stitch | UI 디자인 생성 |
-| Implement | `gpt-5.3-codex-high` | 코드 구현 + PR |
-| Verify | `gpt-5.3-codex-high` | 테스트·린트·빌드 자동 검증 |
-| Debug | `gpt-5.3-codex-high` | 검증 실패 시 자동 디버깅 (최대 3회 루프) |
-| SecurityPatch | `claude-fable-5-thinking-high` | 보안 감사 + 취약점 자동 패치 |
-| Deliver | — | 산출물 패키징 |
-
-## 품질 게이트 워크플로우
+## 프로젝트 구조
 
 ```
-Implement → Verify ──(실패)──→ Debug ──→ Verify (최대 3회)
-                ↓ (통과)
-         SecurityPatch → Deliver
+backend/          # Rust API (Actix-web)
+frontend/         # React + Vite + TypeScript UI
+nginx/            # Nginx 리버스 프록시 설정
+docker-compose.yml
+podman-compose.yml
 ```
 
-- **Verify**: `cargo check/test/clippy`, 린트 실행 → `verify_report.json`
-- **Debug**: 실패 원인 분석·수정 → `debug_report.json` → Verify 재실행
-- **SecurityPatch**: `cargo audit`, OWASP 점검, 의존성 패치 → `security_report.json`
+## 아키텍처 (Compose)
 
-환경 변수 `MAX_DEBUG_CYCLES` (기본 3)로 디버깅 재시도 횟수 조절.
+```
+                    ┌─────────────┐
+  브라우저 ────────►│   nginx:80  │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+         / (SPA)      /v1/*       /health
+              │            │            │
+              ▼            ▼            ▼
+        [정적 파일]    api:8080    api:8080
+                           │
+                    orchestrator + worker×N
+                           │
+                      redis + minio
+```
 
-## Podman + 메시지 큐 + Slack
+- **nginx**: 프론트엔드 정적 파일 서빙 + API 프록시
+- **api**: Rust REST API (프론트엔드 정적 파일 미포함)
+- **orchestrator / worker**: Redis Streams 기반 분산 파이프라인
 
-분산 배포는 [docs/PODMAN.md](docs/PODMAN.md) 참고.
+## 빠른 시작 (Docker Compose)
 
 ```bash
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-./scripts/podman-up.sh
-```
-
-- **Podman**: API / Orchestrator / Worker 컨테이너 분리
-- **Redis Streams**: 커맨드·이벤트 큐로 Worker 수평 확장
-- **Slack**: 스테이지별 진행률 실시간 알림
-
-## 프로그램 구조
-
-```
-src/
-├── main.rs              # CLI 진입점 (기본: 웹 서버)
-├── lib.rs               # 내부 모듈 루트
-├── app.rs               # 애플리케이션 상태
-├── config.rs            # 환경 변수 설정
-├── domain/              # 도메인 타입
-├── clients/             # Cursor API, Stitch MCP
-├── services/            # ingest, orchestrator, worker, pipeline
-└── web/                 # Actix-web 라우트·핸들러
-static/
-└── (React 빌드 산출물 — `cd frontend && npm run build`)
-frontend/
-└── src/                 # React + TypeScript UI 소스
-```
-
-## 실행 방법
-
-```bash
-# 빌드
-cargo build --release
-
-# 환경 변수
 cp .env.example .env
-# .env 파일을 편집한 뒤:
-export $(grep -v '^#' .env | xargs)
+# .env 편집 (CURSOR_API_KEY, GITHUB_TOKEN 등)
 
-# 웹 서버 시작 (기본 명령)
-cargo run
+./scripts/compose-up.sh
 # 또는
-cargo run -- serve --port 8080
+docker compose up -d --build --scale worker=3
 
-# 브라우저에서 접속
-open http://localhost:8080
+open http://localhost
+```
 
-# 프론트엔드 개발 (Vite dev server, API 프록시)
+| URL | 설명 |
+|-----|------|
+| http://localhost | React 대시보드 (nginx) |
+| http://localhost/v1/projects | API |
+| http://localhost:9001 | MinIO 콘솔 |
+
+## 로컬 개발 (분리 실행)
+
+```bash
+# 터미널 1 — 백엔드 API
+cd backend && cargo run
+
+# 터미널 2 — 프론트엔드 (API :8080 프록시)
 cd frontend && npm install && npm run dev
+# http://localhost:5173
 ```
 
 ## GitHub 자동화
 
-`GITHUB_TOKEN`을 설정하면 프로젝트 생성 시 **프라이빗 레포가 자동 생성**되고, Implement 단계에서 Cursor가 **PR을 생성**하며, SecurityPatch 통과 후 **PR이 자동 머지**됩니다.
+`GITHUB_TOKEN` 설정 시 프라이빗 레포 자동 생성 → Cursor PR 생성 → SecurityPatch 통과 후 자동 merge.
 
 ```bash
-export GITHUB_TOKEN=ghp_xxxx          # repo 권한 필요
-export GITHUB_ORG=my-org              # 선택: 조직 레포
-export GITHUB_AUTO_MERGE=true         # 기본값 true
+export GITHUB_TOKEN=ghp_xxxx
+export GITHUB_ORG=my-org        # 선택
+export GITHUB_AUTO_MERGE=true   # 기본값
 ```
 
-## API 엔드포인트 (Actix-web)
+## API 엔드포인트
 
 | Method | Path | 설명 |
 |--------|------|------|
-| GET | `/` | 웹 대시보드로 리다이렉트 |
 | GET | `/health` | 헬스체크 |
-| GET | `/static/index.html` | 업로드 UI |
-| POST | `/v1/projects` | PDF 업로드 + 파이프라인 시작 (multipart) |
+| POST | `/v1/projects` | PDF 업로드 + DevOps 계획서(선택) + 파이프라인 시작 |
 | GET | `/v1/projects` | 프로젝트 목록 |
-| GET | `/v1/projects/{id}` | 프로젝트 상태 |
+| GET | `/v1/projects/{id}` | 프로젝트 상세 |
 | GET | `/v1/projects/{id}/stream` | SSE 진행률 |
-| POST | `/v1/projects/{id}/cancel` | 취소 |
+| GET | `/v1/projects/{id}/daily-logs` | 일별 경과 목록 |
+| GET | `/v1/projects/{id}/daily-logs/{date}` | 특정 날짜 MD 로그 |
 
-### PDF 업로드 예시
+Compose 환경에서는 nginx가 `/v1`, `/health`를 `api:8080`으로 프록시합니다.
 
-```bash
-curl -X POST http://localhost:8080/v1/projects \
-  -F "name=테스트 프로젝트" \
-  -F "repo_url=https://github.com/org/repo" \
-  -F "plan=@plan.pdf"
-```
+### 프로젝트 생성 (multipart)
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `plan` | ✅ | PDF 외주 계획서 |
+| `devops_plan_text` | — | DevOps 계획서 직접 작성 (Markdown/YAML) |
+| `devops_plan` | — | DevOps 계획서 파일 (.md, .yaml, .yml, .txt, .pdf) |
+| `name` | — | 프로젝트 이름 |
+| `repo_url` | — | GitHub 레포 URL |
 
 ## 환경 변수
 
-| 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `HOST` | `0.0.0.0` | 바인드 호스트 |
-| `PORT` | `8080` | 포트 |
-| `CURSOR_API_KEY` | — | Cursor Cloud Agents API |
-| `STITCH_API_KEY` | — | Google Stitch MCP |
-| `ARTIFACTS_ENDPOINT` | `http://localhost:9000` | S3/MinIO 엔드포인트 |
-| `ARTIFACTS_BUCKET` | `autoforge` | 버킷 이름 |
-| `DEFAULT_REPO_URL` | — | 구현 단계 기본 repo (GitHub 미설정 시) |
-| `GITHUB_TOKEN` | — | GitHub PAT (`repo` 권한) — 프라이빗 레포 자동 생성 |
-| `GITHUB_ORG` | — | Organization (없으면 사용자 계정에 생성) |
-| `GITHUB_AUTO_MERGE` | `true` | SecurityPatch 통과 후 PR 자동 squash merge |
-| `MESSAGE_QUEUE_ENABLED` | `false` (로컬) | Redis MQ 활성화 |
-| `REDIS_URL` | `redis://127.0.0.1:6379` | Redis 연결 |
-| `SLACK_WEBHOOK_URL` | — | Slack 진행률 Webhook |
-| `SLACK_BOT_TOKEN` | — | Slack Bot (스레드용) |
-| `SLACK_CHANNEL` | — | Slack 채널 ID |
-| `MAX_DEBUG_CYCLES` | `3` | Debug 재시도 횟수 |
+전체 목록은 [.env.example](.env.example) 참고.
 
 ## 상세 문서
 
+- [docs/PODMAN.md](docs/PODMAN.md) — Podman / Compose 배포
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 아키텍처 설계
-- [docs/PLANNING.md](docs/PLANNING.md) — 구현 로드맵
+- [docs/QUALITY_WORKFLOW.md](docs/QUALITY_WORKFLOW.md) — 품질 게이트
 
 ## 라이선스
 

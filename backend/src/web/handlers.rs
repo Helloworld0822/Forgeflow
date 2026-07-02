@@ -1,11 +1,11 @@
 use crate::app::App;
-use crate::domain::{PipelineState, ProjectDetailView, ProjectView, StageState};
+use crate::domain::{DailyLogSummary, DevopsPlanInput, PipelineState, ProjectDetailView, ProjectView, StageState};
 use crate::error::{AutoForgeError, Result};
 use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::{run_inline, start_project_mq};
 use actix_multipart::Multipart;
 use actix_web::http::header;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpResponse};
 use futures_util::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -19,10 +19,6 @@ pub async fn health(app: web::Data<Arc<App>>) -> HttpResponse {
         "github": app.github.is_some(),
         "github_auto_merge": app.config.github_auto_merge,
     }))
-}
-
-pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse> {
-    Ok(actix_files::NamedFile::open("static/index.html")?.into_response(&req))
 }
 
 pub async fn list_projects(app: web::Data<Arc<App>>) -> Result<HttpResponse> {
@@ -47,6 +43,7 @@ pub async fn create_project(
     let mut name: Option<String> = None;
     let mut repo_url: Option<String> = None;
     let mut pdf_bytes: Option<Vec<u8>> = None;
+    let mut devops_plan = DevopsPlanInput::default();
 
     while let Some(field) = payload
         .try_next()
@@ -58,6 +55,11 @@ pub async fn create_project(
             .and_then(|d| d.get_name().map(String::from))
             .unwrap_or_default();
 
+        let field_filename = field
+            .content_disposition()
+            .and_then(|d| d.get_filename().map(String::from));
+        let field_content_type = field.content_type().map(|m| m.to_string());
+
         let mut data = Vec::new();
         let mut field = field;
         while let Some(chunk) = field.next().await {
@@ -68,6 +70,14 @@ pub async fn create_project(
         match field_name.as_str() {
             "name" => name = Some(String::from_utf8_lossy(&data).to_string()),
             "repo_url" => repo_url = Some(String::from_utf8_lossy(&data).to_string()),
+            "devops_plan_text" | "devops_text" => {
+                devops_plan.text = Some(String::from_utf8_lossy(&data).to_string());
+            }
+            "devops_plan" | "devops" | "devops_file" => {
+                devops_plan.bytes = Some(data);
+                devops_plan.filename = field_filename;
+                devops_plan.content_type = field_content_type;
+            }
             "plan" | "pdf" | "file" => pdf_bytes = Some(data),
             _ => {}
         }
@@ -82,6 +92,9 @@ pub async fn create_project(
 
     let mut project = app.create_project(name, repo_url).await;
     project.pdf_bytes = Some(pdf);
+    if devops_plan.has_content() {
+        project.devops_plan = Some(devops_plan);
+    }
 
     // GitHub 프라이빗 레포 자동 생성 (repo_url 미지정 시)
     if project.repo_url.is_none() {
@@ -123,6 +136,7 @@ pub async fn create_project(
             .and_then(|m| m.get("auto_created"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        "has_devops_plan": project.devops_plan.as_ref().is_some_and(|d| d.has_content()),
     })))
 }
 
@@ -185,4 +199,43 @@ pub async fn cancel_project(
         "id": id,
         "state": "cancelled",
     })))
+}
+
+pub async fn list_daily_logs(
+    app: web::Data<Arc<App>>,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse> {
+    let id = path.into_inner();
+    let project = app
+        .get_project(id)
+        .await
+        .ok_or_else(|| AutoForgeError::NotFound(format!("project {id}")))?;
+
+    let mut logs: Vec<DailyLogSummary> = project
+        .daily_logs
+        .values()
+        .map(DailyLogSummary::from)
+        .collect();
+    logs.sort_by(|a, b| a.date.cmp(&b.date));
+
+    Ok(HttpResponse::Ok().json(logs))
+}
+
+pub async fn get_daily_log(
+    app: web::Data<Arc<App>>,
+    path: web::Path<(Uuid, String)>,
+) -> Result<HttpResponse> {
+    let (id, date) = path.into_inner();
+    let project = app
+        .get_project(id)
+        .await
+        .ok_or_else(|| AutoForgeError::NotFound(format!("project {id}")))?;
+
+    let log = project
+        .daily_logs
+        .get(&date)
+        .cloned()
+        .ok_or_else(|| AutoForgeError::NotFound(format!("daily log {date}")))?;
+
+    Ok(HttpResponse::Ok().json(log))
 }

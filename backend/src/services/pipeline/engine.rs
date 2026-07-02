@@ -5,6 +5,8 @@ use crate::domain::{
 use crate::error::{AutoForgeError, Result};
 use crate::services::worker::{executors, StageContext, StageOutput};
 use crate::services::github::try_auto_merge_pr;
+use crate::services::daily_log::DailyEvent;
+use crate::services::daily_log_notify::record_daily_event;
 use bytes::Bytes;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -143,10 +145,11 @@ pub fn apply_stage_output(
     Ok(PipelineOutcome::Continue)
 }
 
-pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()> {
+pub async fn prepare_project_inputs(app: &App, project: &mut Project) -> Result<()> {
     let project_id = project.id.0;
-    let pdf_key = format!("projects/{project_id}/plan.pdf");
+
     if let Some(pdf) = &project.pdf_bytes {
+        let pdf_key = format!("projects/{project_id}/plan.pdf");
         app.artifacts
             .put(pdf_key.as_str(), Bytes::from(pdf.clone()), "application/pdf")
             .await?;
@@ -159,7 +162,56 @@ pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()>
             });
         }
     }
+
+    if let Some(devops) = &project.devops_plan {
+        if devops.has_content() {
+            let storage_name = devops_storage_name(devops);
+            let key = format!("projects/{project_id}/{storage_name}");
+
+            let (bytes, content_type) = if let Some(b) = &devops.bytes {
+                (
+                    Bytes::from(b.clone()),
+                    devops
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".into()),
+                )
+            } else if let Some(text) = &devops.text {
+                if text.trim().is_empty() {
+                    return Ok(());
+                }
+                (Bytes::from(text.clone()), "text/markdown".into())
+            } else {
+                return Ok(());
+            };
+
+            app.artifacts.put(key.as_str(), bytes, &content_type).await?;
+            project.accumulated_artifacts.push(ArtifactRef {
+                name: storage_name.clone(),
+                uri: app.artifacts.uri_for(&key),
+                content_type,
+                sha256: None,
+            });
+        }
+    }
+
     Ok(())
+}
+
+#[allow(dead_code)]
+pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()> {
+    prepare_project_inputs(app, project).await
+}
+
+fn devops_storage_name(devops: &crate::domain::DevopsPlanInput) -> String {
+    if let Some(name) = &devops.filename {
+        if name.starts_with("devops_plan") {
+            return name.clone();
+        }
+        let ext = name.rsplit('.').next().unwrap_or("md");
+        return format!("devops_plan.{ext}");
+    }
+    "devops_plan.md".into()
 }
 
 #[derive(Debug)]
@@ -188,6 +240,17 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
             app.store.save(&project).await?;
         }
     }
+
+    let _ = record_daily_event(
+        &app,
+        &mut project,
+        DailyEvent {
+            event: "project_created",
+            stage: None,
+            message: "프로젝트 생성 및 파이프라인 시작".into(),
+        },
+    )
+    .await;
 
     loop {
         let commands = project.scheduler.ready_stages();
@@ -226,6 +289,17 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
                     .await;
             }
 
+            let _ = record_daily_event(
+                &app,
+                &mut project,
+                DailyEvent {
+                    event: "stage_running",
+                    stage: Some(stage),
+                    message: format!("{} 스테이지 실행 시작", stage.as_str()),
+                },
+            )
+            .await;
+
             match execute_stage(&app, &project, stage).await {
                 Ok(output) => {
                     let outcome = apply_stage_output_async(&app, &mut project, stage, output).await?;
@@ -247,6 +321,22 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
                             .await;
                     }
 
+                    let event_name = if project.stages.get(&stage) == Some(&StageState::Failed) {
+                        "stage_failed"
+                    } else {
+                        "stage_completed"
+                    };
+                    let _ = record_daily_event(
+                        &app,
+                        &mut project,
+                        DailyEvent {
+                            event: event_name,
+                            stage: Some(stage),
+                            message: format!("{} 스테이지 {}", stage.as_str(), event_name),
+                        },
+                    )
+                    .await;
+
                     match outcome {
                         PipelineOutcome::Completed => {
                             if let Some(slack) = &app.slack {
@@ -257,6 +347,16 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
                                     )
                                     .await;
                             }
+                            let _ = record_daily_event(
+                                &app,
+                                &mut project,
+                                DailyEvent {
+                                    event: "pipeline_completed",
+                                    stage: None,
+                                    message: "파이프라인 완료".into(),
+                                },
+                            )
+                            .await;
                             return Ok(());
                         }
                         PipelineOutcome::Failed(msg) => {
@@ -269,6 +369,16 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
                                     )
                                     .await;
                             }
+                            let _ = record_daily_event(
+                                &app,
+                                &mut project,
+                                DailyEvent {
+                                    event: "pipeline_failed",
+                                    stage: Some(stage),
+                                    message: msg.clone(),
+                                },
+                            )
+                            .await;
                             return Err(AutoForgeError::StageFailed { stage, message: msg });
                         }
                         PipelineOutcome::Continue => {}
