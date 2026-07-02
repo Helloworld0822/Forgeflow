@@ -115,7 +115,9 @@
       요약: <code>claude-4.6-sonnet-high-thinking</code><br />
       기획: <code>claude-fable-5-thinking-high</code><br />
       디자인: <code>Google Stitch</code><br />
-      코딩: <code>gpt-5.3-codex-high</code>
+      코딩: <code>gpt-5.3-codex-high</code><br />
+      검증·디버깅: <code>gpt-5.3-codex-high</code> (최대 3회 루프)<br />
+      보안 패치: <code>claude-fable-5-thinking-high</code>
     </div>
 
     <div class="card" id="status-card" style="display:none">
@@ -126,10 +128,11 @@
   </div>
 
   <script>
-    const STAGES = ["ingest","summarize","architect","design","implement","verify","deliver"];
+    const STAGES = ["ingest","summarize","architect","design","implement","verify","debug","security_patch","deliver"];
     const STAGE_LABELS = {
       ingest: "PDF 수집", summarize: "Sonnet 요약", architect: "Fable 기획",
-      design: "Stitch 디자인", implement: "Codex 구현", verify: "검증", deliver: "전달"
+      design: "Stitch 디자인", implement: "Codex 구현",
+      verify: "자동 검증", debug: "Codex 디버깅", security_patch: "보안 패치", deliver: "전달"
     };
 
     function renderStages(stages) {
