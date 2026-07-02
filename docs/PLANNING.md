@@ -13,6 +13,7 @@ Rust 워크스페이스 빌드 가능, Cursor API 연동 PoC.
 | P0-2 | `shared` — 도메인 타입 + 에러 | `cargo test` 통과 |
 | P0-3 | `ingest` — lopdf 텍스트 추출 | 샘플 PDF → `raw_text.md` |
 | P0-4 | Docker Compose (PG + Redis + MinIO) | `docker compose up` 성공 |
+| P0-5 | Actix-web 서버 + PDF 업로드 UI | `cargo run` → http://localhost:8080 |
 
 ---
 

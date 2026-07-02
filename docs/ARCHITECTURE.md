@@ -22,8 +22,8 @@ flowchart TB
         Webhook[Webhook / Slack]
     end
 
-    subgraph AutoForge["AutoForge (Rust)"]
-        API[api — Axum REST]
+    subgraph AutoForge["AutoForge (Rust 프로그램)"]
+        API[web — Actix-web]
         ORC[orchestrator — 상태 머신]
         W1[worker: ingest]
         W2[worker: summarize]
@@ -107,9 +107,23 @@ flowchart TB
 
 ---
 
-## 4. Rust Crate 책임 분리
+## 프로그램 구조 (단일 바이너리)
 
-### 4.1 `shared` — 도메인 코어
+```
+autoforge/                  # 실행 프로그램 (cargo run)
+├── src/
+│   ├── main.rs             # CLI — 기본 `serve` (Actix-web)
+│   ├── app.rs              # 전역 App 상태
+│   ├── config.rs
+│   ├── domain/             # StageId, Project, ModelProfile
+│   ├── clients/            # cursor.rs, stitch.rs
+│   ├── services/           # ingest, orchestrator, worker, pipeline
+│   └── web/                # Actix-web routes + handlers
+├── static/index.html       # 웹 대시보드
+└── migrations/             # PostgreSQL 스키마 (향후)
+```
+
+### 4.1 `domain` — 도메인 코어
 
 - `ProjectId`, `RunId`, `StageId` (newtype + UUID)
 - `PipelineState` enum (상태 머신)
@@ -131,7 +145,7 @@ pub enum PipelineState {
 }
 ```
 
-### 4.2 `cursor-client` — Cursor API 래퍼
+### 4.2 `clients/cursor` — Cursor API 래퍼
 
 - `POST /v1/agents` — 에이전트 생성 + 초기 run
 - `POST /v1/agents/{id}/runs` — 후속 프롬프트
@@ -145,25 +159,25 @@ pub enum PipelineState {
 - 동일 repo에 대한 agent는 **재사용** (conversation context 유지)
 - `agentId` 클라이언트 지정으로 멱등 생성 (`bc-{project_uuid}`)
 
-### 4.3 `stitch-client` — Stitch MCP
+### 4.3 `clients/stitch` — Stitch MCP
 
 - Base URL: `https://stitch.googleapis.com/mcp`
 - `Project::create()` → `generate(prompt)` → `getHtml()` / `getImage()`
 - 디자인 스펙은 `summary.json`의 `ui_requirements` 필드에서 추출
 
-### 4.4 `ingest` — PDF 처리
+### 4.4 `services/ingest` — PDF 처리
 
 - 1차: `lopdf` 텍스트 추출 (빠름, zero external deps)
 - 2차 fallback: 스캔 PDF → 외부 OCR 워커 (Tesseract sidecar, optional)
 - SHA-256 해시로 중복 PDF 스킵
 
-### 4.5 `artifacts` — 산출물 저장
+### 4.5 `services/artifacts` — 산출물 저장
 
 - S3 호환 API (`aws-sdk-s3` 또는 MinIO)
 - Content-addressable: `sha256/{hash}` 경로
 - 스테이지 간 전달은 **S3 URI 참조만** (메모리에 대용량 복사 금지)
 
-### 4.6 `orchestrator` — 상태 머신 + 스케줄러
+### 4.6 `services/orchestrator` — 상태 머신 + 스케줄러
 
 핵심 설계: **이벤트 소싱 + 낙관적 잠금**
 
@@ -183,7 +197,7 @@ Redis Streams: stage_commands (work queue, consumer group)
 - Agent run `FAILED`: 프롬프트 보강 후 1회 재시도
 - `verify` 실패: Codex에 `verify_report.json` 첨부 후 재구현 (최대 2회)
 
-### 4.7 `worker` — 스테이지 실행기
+### 4.7 `services/worker` + `services/pipeline` — 스테이지 실행
 
 각 worker는 Redis consumer group 멤버. **수평 확장** 가능.
 
@@ -197,7 +211,7 @@ pub trait StageExecutor: Send + Sync {
 
 Worker 프로세스는 `STAGE_FILTER` env로 특정 스테이지만 처리 가능 (K8s HPA 대상).
 
-### 4.8 `api` — REST Ingress
+### 4.8 `web` — Actix-web HTTP 서버
 
 | Method | Path | 설명 |
 |--------|------|------|
