@@ -12,7 +12,7 @@ pub use routes::configure;
 
 pub async fn serve(app: Arc<App>) -> std::io::Result<()> {
     let bind = app.config.bind_addr();
-    let data = web::Data::from(app);
+    let data = web::Data::new(app);
 
     tracing::info!(bind = %bind, "starting Actix-web server");
 

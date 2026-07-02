@@ -180,8 +180,8 @@ pub struct StageCompleted {
     pub output_artifacts: Vec<ArtifactRef>,
 }
 
-/// 런타임 프로젝트 엔티티 (인메모리 저장)
-#[derive(Debug, Clone)]
+/// 런타임 프로젝트 엔티티
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: ProjectId,
     pub name: Option<String>,
@@ -194,6 +194,28 @@ pub struct Project {
     pub stage_outputs: HashMap<StageId, serde_json::Value>,
     /// 누적 산출물 참조
     pub accumulated_artifacts: Vec<ArtifactRef>,
+    /// Slack 진행 메시지 ts (업데이트용)
+    #[serde(default)]
+    pub slack_message_ts: Option<String>,
+}
+
+impl Project {
+    /// 전체 파이프라인 진행률 (0–100)
+    pub fn progress_percent(&self) -> u8 {
+        let total = StageId::all().len() as u32;
+        let done = self
+            .stages
+            .values()
+            .filter(|s| matches!(s, StageState::Completed | StageState::Skipped))
+            .count() as u32;
+        ((done * 100) / total.max(1)) as u8
+    }
+
+    pub fn display_name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Project {}", &self.id.0.to_string()[..8]))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

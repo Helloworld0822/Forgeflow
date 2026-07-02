@@ -1,0 +1,282 @@
+use crate::app::App;
+use crate::domain::{
+    ArtifactRef, PipelineState, Project, StageCompleted, StageId, StageState,
+};
+use crate::error::{AutoForgeError, Result};
+use crate::services::worker::{executors, StageContext, StageOutput};
+use bytes::Bytes;
+use tracing::{info, warn};
+use uuid::Uuid;
+
+/// 단일 스테이지 실행
+pub async fn execute_stage(app: &App, project: &Project, stage: StageId) -> Result<StageOutput> {
+    let project_id = project.id.0;
+    let pdf_key = format!("projects/{project_id}/plan.pdf");
+
+    let mut accumulated = project.accumulated_artifacts.clone();
+    if accumulated.is_empty() {
+        accumulated.push(ArtifactRef {
+            name: "plan.pdf".into(),
+            uri: app.artifacts.uri_for(&pdf_key),
+            content_type: "application/pdf".into(),
+            sha256: None,
+        });
+    }
+
+    let executor_map: std::collections::HashMap<_, _> = executors()
+        .into_iter()
+        .map(|e| (e.stage(), e))
+        .collect();
+
+    let executor = executor_map
+        .get(&stage)
+        .ok_or_else(|| AutoForgeError::Internal(format!("no executor for {stage:?}")))?;
+
+    let pr_url = project
+        .stage_outputs
+        .get(&StageId::Implement)
+        .and_then(|m| m.get("pr_url"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let ctx = StageContext {
+        command: crate::domain::StageCommand {
+            project_id: project.id.clone(),
+            stage,
+            attempt: 0,
+        },
+        artifacts: app.artifacts.clone(),
+        cursor: app.cursor.clone(),
+        stitch: app.stitch.clone(),
+        input: accumulated,
+        repo_url: project
+            .repo_url
+            .clone()
+            .or(app.config.default_repo_url.clone()),
+        stage_outputs: project.stage_outputs.clone(),
+        pr_url,
+    };
+
+    executor.execute(&ctx).await
+}
+
+/// 스테이지 결과를 프로젝트에 반영
+pub fn apply_stage_output(
+    project: &mut Project,
+    stage: StageId,
+    output: StageOutput,
+) -> Result<PipelineOutcome> {
+    project
+        .accumulated_artifacts
+        .extend(output.artifacts.clone());
+    project
+        .stage_outputs
+        .insert(stage, output.metadata.clone());
+
+    match stage {
+        StageId::Verify => {
+            let passed = output
+                .metadata
+                .get("passed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            project.scheduler.record_verify_result(passed);
+            if passed {
+                project.stages.insert(stage, StageState::Completed);
+            } else if project.scheduler.quality.verify_exhausted() {
+                project.stages.insert(stage, StageState::Failed);
+                project.scheduler.mark_failed(stage);
+                project.state = PipelineState::Failed;
+                return Ok(PipelineOutcome::Failed(
+                    "verification failed after max debug cycles".into(),
+                ));
+            } else {
+                project.stages.insert(stage, StageState::Failed);
+                project.stages.insert(StageId::Debug, StageState::Queued);
+            }
+        }
+        StageId::Debug => {
+            project.scheduler.record_debug_done();
+            project.stages.insert(stage, StageState::Completed);
+            project.stages.insert(StageId::Verify, StageState::Queued);
+        }
+        StageId::SecurityPatch => {
+            project.scheduler.record_security_done();
+            project.stages.insert(stage, StageState::Completed);
+        }
+        _ => {
+            project.stages.insert(stage, StageState::Completed);
+            project.scheduler.mark_completed(&StageCompleted {
+                project_id: project.id.clone(),
+                stage,
+                output_artifacts: output.artifacts,
+            });
+        }
+    }
+
+    if project.scheduler.is_pipeline_complete() {
+        project.state = PipelineState::Completed;
+        return Ok(PipelineOutcome::Completed);
+    }
+    if project.scheduler.has_failed() {
+        project.state = PipelineState::Failed;
+        return Ok(PipelineOutcome::Failed("quality gate failed".into()));
+    }
+
+    Ok(PipelineOutcome::Continue)
+}
+
+pub async fn prepare_project_pdf(app: &App, project: &mut Project) -> Result<()> {
+    let project_id = project.id.0;
+    let pdf_key = format!("projects/{project_id}/plan.pdf");
+    if let Some(pdf) = &project.pdf_bytes {
+        app.artifacts
+            .put(pdf_key.as_str(), Bytes::from(pdf.clone()), "application/pdf")
+            .await?;
+        if project.accumulated_artifacts.is_empty() {
+            project.accumulated_artifacts.push(ArtifactRef {
+                name: "plan.pdf".into(),
+                uri: app.artifacts.uri_for(&pdf_key),
+                content_type: "application/pdf".into(),
+                sha256: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum PipelineOutcome {
+    Continue,
+    Completed,
+    Failed(String),
+}
+
+/// 인라인 모드 — 단일 프로세스에서 전체 파이프라인 실행
+pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()> {
+    let mut project = app
+        .store
+        .get(project_id)
+        .await?
+        .ok_or_else(|| AutoForgeError::NotFound(format!("project {project_id}")))?;
+
+    project.state = PipelineState::Running;
+    app.store.save(&project).await?;
+    prepare_project_pdf(&app, &mut project).await?;
+    app.store.save(&project).await?;
+
+    if let Some(slack) = &app.slack {
+        if let Ok(Some(ts)) = slack.notify_project_created(&project).await {
+            project.slack_message_ts = Some(ts);
+            app.store.save(&project).await?;
+        }
+    }
+
+    loop {
+        let commands = project.scheduler.ready_stages();
+        if commands.is_empty() {
+            if project.scheduler.is_pipeline_complete() {
+                project.state = PipelineState::Completed;
+                app.store.save(&project).await?;
+                if let Some(slack) = &app.slack {
+                    let _ = slack
+                        .notify_pipeline_done(&project, project.slack_message_ts.as_deref())
+                        .await;
+                }
+                info!(%project_id, "pipeline completed");
+                return Ok(());
+            }
+            if project.scheduler.has_failed() {
+                project.state = PipelineState::Failed;
+                app.store.save(&project).await?;
+                return Err(AutoForgeError::Orchestrator(
+                    "quality gate failed".into(),
+                ));
+            }
+            break;
+        }
+
+        for cmd in commands {
+            let stage = cmd.stage;
+            info!(%project_id, ?stage, "running stage");
+            project.stages.insert(stage, StageState::Running);
+            project.scheduler.mark_running(stage);
+            app.store.save(&project).await?;
+
+            if let Some(slack) = &app.slack {
+                let _ = slack
+                    .notify_stage_update(&project, stage, "running", project.slack_message_ts.as_deref())
+                    .await;
+            }
+
+            match execute_stage(&app, &project, stage).await {
+                Ok(output) => {
+                    let outcome = apply_stage_output(&mut project, stage, output)?;
+                    app.store.save(&project).await?;
+
+                    if let Some(slack) = &app.slack {
+                        let status = if project.stages.get(&stage) == Some(&StageState::Failed) {
+                            "failed"
+                        } else {
+                            "completed"
+                        };
+                        let _ = slack
+                            .notify_stage_update(
+                                &project,
+                                stage,
+                                status,
+                                project.slack_message_ts.as_deref(),
+                            )
+                            .await;
+                    }
+
+                    match outcome {
+                        PipelineOutcome::Completed => {
+                            if let Some(slack) = &app.slack {
+                                let _ = slack
+                                    .notify_pipeline_done(
+                                        &project,
+                                        project.slack_message_ts.as_deref(),
+                                    )
+                                    .await;
+                            }
+                            return Ok(());
+                        }
+                        PipelineOutcome::Failed(msg) => {
+                            if let Some(slack) = &app.slack {
+                                let _ = slack
+                                    .notify_pipeline_failed(
+                                        &project,
+                                        &msg,
+                                        project.slack_message_ts.as_deref(),
+                                    )
+                                    .await;
+                            }
+                            return Err(AutoForgeError::StageFailed { stage, message: msg });
+                        }
+                        PipelineOutcome::Continue => {}
+                    }
+                }
+                Err(e) => {
+                    warn!(%project_id, ?stage, error = %e, "stage failed");
+                    project.stages.insert(stage, StageState::Failed);
+                    project.scheduler.mark_failed(stage);
+                    project.state = PipelineState::Failed;
+                    app.store.save(&project).await?;
+                    if let Some(slack) = &app.slack {
+                        let _ = slack
+                            .notify_pipeline_failed(
+                                &project,
+                                &e.to_string(),
+                                project.slack_message_ts.as_deref(),
+                            )
+                            .await;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

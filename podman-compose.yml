@@ -1,0 +1,86 @@
+# Podman Compose — AutoForge 분산 배포
+# 사용: podman-compose up -d --build
+
+version: "3.9"
+
+x-app-env: &app-env
+  MESSAGE_QUEUE_ENABLED: "true"
+  REDIS_URL: redis://redis:6379
+  ARTIFACTS_ENDPOINT: http://minio:9000
+  ARTIFACTS_BUCKET: autoforge
+  CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+  STITCH_API_KEY: ${STITCH_API_KEY:-}
+  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+  SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+  SLACK_CHANNEL: ${SLACK_CHANNEL:-}
+  MAX_DEBUG_CYCLES: "3"
+  WORKER_CONCURRENCY: "4"
+
+services:
+  redis:
+    image: docker.io/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: docker.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/autoforge:latest
+    command: ["serve"]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *app-env
+      HOST: 0.0.0.0
+      PORT: "8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  orchestrator:
+    image: localhost/autoforge:latest
+    command: ["orchestrate"]
+    environment:
+      <<: *app-env
+      ORCHESTRATOR_ID: orchestrator-1
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: localhost/autoforge:latest
+    command: ["worker"]
+    environment:
+      <<: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  minio-data:

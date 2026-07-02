@@ -31,6 +31,19 @@ Implement → Verify ──(실패)──→ Debug ──→ Verify (최대 3회
 
 환경 변수 `MAX_DEBUG_CYCLES` (기본 3)로 디버깅 재시도 횟수 조절.
 
+## Podman + 메시지 큐 + Slack
+
+분산 배포는 [docs/PODMAN.md](docs/PODMAN.md) 참고.
+
+```bash
+export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+./scripts/podman-up.sh
+```
+
+- **Podman**: API / Orchestrator / Worker 컨테이너 분리
+- **Redis Streams**: 커맨드·이벤트 큐로 Worker 수평 확장
+- **Slack**: 스테이지별 진행률 실시간 알림
+
 ## 프로그램 구조
 
 ```
@@ -99,6 +112,12 @@ curl -X POST http://localhost:8080/v1/projects \
 | `ARTIFACTS_ENDPOINT` | `http://localhost:9000` | S3/MinIO 엔드포인트 |
 | `ARTIFACTS_BUCKET` | `autoforge` | 버킷 이름 |
 | `DEFAULT_REPO_URL` | — | 구현 단계 기본 repo |
+| `MESSAGE_QUEUE_ENABLED` | `false` (로컬) | Redis MQ 활성화 |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Redis 연결 |
+| `SLACK_WEBHOOK_URL` | — | Slack 진행률 Webhook |
+| `SLACK_BOT_TOKEN` | — | Slack Bot (스레드용) |
+| `SLACK_CHANNEL` | — | Slack 채널 ID |
+| `MAX_DEBUG_CYCLES` | `3` | Debug 재시도 횟수 |
 
 ## 상세 문서
 
