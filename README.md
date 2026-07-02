@@ -69,8 +69,9 @@ frontend/
 cargo build --release
 
 # 환경 변수
-export CURSOR_API_KEY=your_key
-export STITCH_API_KEY=your_key
+cp .env.example .env
+# .env 파일을 편집한 뒤:
+export $(grep -v '^#' .env | xargs)
 
 # 웹 서버 시작 (기본 명령)
 cargo run
