@@ -4,6 +4,7 @@ use crate::domain::{
 };
 use crate::error::{AutoForgeError, Result};
 use crate::services::worker::{executors, StageContext, StageOutput};
+use crate::services::github::try_auto_merge_pr;
 use bytes::Bytes;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -58,6 +59,22 @@ pub async fn execute_stage(app: &App, project: &Project, stage: StageId) -> Resu
     };
 
     executor.execute(&ctx).await
+}
+
+/// 스테이지 결과를 프로젝트에 반영 (GitHub 머지는 SecurityPatch 이후 비동기 처리)
+pub async fn apply_stage_output_async(
+    app: &App,
+    project: &mut Project,
+    stage: StageId,
+    output: StageOutput,
+) -> Result<PipelineOutcome> {
+    let outcome = apply_stage_output(project, stage, output)?;
+
+    if stage == StageId::SecurityPatch {
+        try_auto_merge_pr(app, project).await?;
+    }
+
+    Ok(outcome)
 }
 
 /// 스테이지 결과를 프로젝트에 반영
@@ -211,7 +228,7 @@ pub async fn run_inline(app: std::sync::Arc<App>, project_id: Uuid) -> Result<()
 
             match execute_stage(&app, &project, stage).await {
                 Ok(output) => {
-                    let outcome = apply_stage_output(&mut project, stage, output)?;
+                    let outcome = apply_stage_output_async(&app, &mut project, stage, output).await?;
                     app.store.save(&project).await?;
 
                     if let Some(slack) = &app.slack {

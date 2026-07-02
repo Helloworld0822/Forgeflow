@@ -1,8 +1,9 @@
 use crate::app::App;
 use crate::domain::{PipelineState, StageState};
 use crate::error::{AutoForgeError, Result};
+use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::engine::{
-    apply_stage_output, execute_stage, prepare_project_pdf, PipelineOutcome,
+    apply_stage_output_async, execute_stage, prepare_project_pdf, PipelineOutcome,
 };
 use crate::services::queue::messages::PipelineEvent;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub async fn start_project_mq(app: Arc<App>, project_id: Uuid) -> Result<()> {
         .ok_or_else(|| AutoForgeError::NotFound(format!("project {project_id}")))?;
 
     project.state = PipelineState::Running;
+    ensure_project_repo(&app, &mut project).await?;
     prepare_project_pdf(&app, &mut project).await?;
     app.store.save(&project).await?;
 
@@ -179,7 +181,7 @@ async fn handle_event(app: &App, event: &PipelineEvent) -> Result<()> {
                 artifacts: vec![],
                 metadata: metadata.clone(),
             };
-            let outcome = apply_stage_output(&mut project, *stage, output)?;
+            let outcome = apply_stage_output_async(&app, &mut project, *stage, output).await?;
             app.store.save(&project).await?;
 
             if let Some(slack) = &app.slack {

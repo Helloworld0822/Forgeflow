@@ -57,7 +57,9 @@ src/
 ├── services/            # ingest, orchestrator, worker, pipeline
 └── web/                 # Actix-web 라우트·핸들러
 static/
-└── index.html           # 웹 대시보드 (PDF 업로드 UI)
+└── (React 빌드 산출물 — `cd frontend && npm run build`)
+frontend/
+└── src/                 # React + TypeScript UI 소스
 ```
 
 ## 실행 방법
@@ -77,6 +79,19 @@ cargo run -- serve --port 8080
 
 # 브라우저에서 접속
 open http://localhost:8080
+
+# 프론트엔드 개발 (Vite dev server, API 프록시)
+cd frontend && npm install && npm run dev
+```
+
+## GitHub 자동화
+
+`GITHUB_TOKEN`을 설정하면 프로젝트 생성 시 **프라이빗 레포가 자동 생성**되고, Implement 단계에서 Cursor가 **PR을 생성**하며, SecurityPatch 통과 후 **PR이 자동 머지**됩니다.
+
+```bash
+export GITHUB_TOKEN=ghp_xxxx          # repo 권한 필요
+export GITHUB_ORG=my-org              # 선택: 조직 레포
+export GITHUB_AUTO_MERGE=true         # 기본값 true
 ```
 
 ## API 엔드포인트 (Actix-web)
@@ -111,7 +126,10 @@ curl -X POST http://localhost:8080/v1/projects \
 | `STITCH_API_KEY` | — | Google Stitch MCP |
 | `ARTIFACTS_ENDPOINT` | `http://localhost:9000` | S3/MinIO 엔드포인트 |
 | `ARTIFACTS_BUCKET` | `autoforge` | 버킷 이름 |
-| `DEFAULT_REPO_URL` | — | 구현 단계 기본 repo |
+| `DEFAULT_REPO_URL` | — | 구현 단계 기본 repo (GitHub 미설정 시) |
+| `GITHUB_TOKEN` | — | GitHub PAT (`repo` 권한) — 프라이빗 레포 자동 생성 |
+| `GITHUB_ORG` | — | Organization (없으면 사용자 계정에 생성) |
+| `GITHUB_AUTO_MERGE` | `true` | SecurityPatch 통과 후 PR 자동 squash merge |
 | `MESSAGE_QUEUE_ENABLED` | `false` (로컬) | Redis MQ 활성화 |
 | `REDIS_URL` | `redis://127.0.0.1:6379` | Redis 연결 |
 | `SLACK_WEBHOOK_URL` | — | Slack 진행률 Webhook |

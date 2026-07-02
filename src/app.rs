@@ -5,6 +5,7 @@ use crate::services::orchestrator::DagScheduler;
 use crate::services::queue::MessageQueue;
 use crate::services::store::{MemoryStore, ProjectStore, RedisProjectStore};
 use crate::clients::slack::SlackNotifier;
+use crate::clients::github::GitHubClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ pub struct App {
     pub stitch: Arc<crate::clients::stitch::StitchClient>,
     pub queue: Option<Arc<MessageQueue>>,
     pub slack: Option<Arc<SlackNotifier>>,
+    pub github: Option<Arc<GitHubClient>>,
 }
 
 impl App {
@@ -64,6 +66,18 @@ impl App {
             }
         });
 
+        let github = if config.github_enabled() {
+            GitHubClient::new(
+                config.github_token.clone().unwrap_or_default(),
+                config.github_org.clone(),
+                config.github_auto_merge,
+            )
+            .ok()
+            .map(Arc::new)
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             store,
@@ -72,6 +86,7 @@ impl App {
             stitch,
             queue,
             slack,
+            github,
         })
     }
 

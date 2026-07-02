@@ -1,12 +1,18 @@
 # syntax=docker/dockerfile:1
 
+FROM docker.io/library/node:22-bookworm AS frontend
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM docker.io/library/rust:1-bookworm AS builder
 WORKDIR /build
-# Containerfile — Cargo.lock이 없으면 빌드 단계에서 생성
 COPY Cargo.toml ./
 COPY Cargo.lock* ./
 COPY src ./src
-COPY static ./static
+COPY --from=frontend /build/static ./static
 RUN cargo build --release
 
 FROM docker.io/library/debian:bookworm-slim AS runtime
@@ -16,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /build/target/release/autoforge /usr/local/bin/autoforge
-COPY static ./static
+COPY --from=frontend /build/static ./static
 
 ENV HOST=0.0.0.0
 ENV PORT=8080

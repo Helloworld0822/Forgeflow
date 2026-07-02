@@ -42,6 +42,9 @@ pub enum AutoForgeError {
     #[error("slack error: {0}")]
     Slack(String),
 
+    #[error("github error: {0}")]
+    GitHub(String),
+
     #[error("store error: {0}")]
     Store(String),
 

@@ -20,6 +20,12 @@ pub struct Config {
     pub queue_consumer_group: String,
     pub worker_concurrency: usize,
     pub podman_worker_image: String,
+    /// GitHub Personal Access Token (repo 권한)
+    pub github_token: Option<String>,
+    /// GitHub Organization (없으면 사용자 계정)
+    pub github_org: Option<String>,
+    /// SecurityPatch 통과 후 PR 자동 머지
+    pub github_auto_merge: bool,
 }
 
 impl Config {
@@ -57,7 +63,19 @@ impl Config {
                 .unwrap_or(4),
             podman_worker_image: env::var("PODMAN_WORKER_IMAGE")
                 .unwrap_or_else(|_| "localhost/autoforge:latest".into()),
+            github_token: env::var("GITHUB_TOKEN").ok(),
+            github_org: env::var("GITHUB_ORG").ok(),
+            github_auto_merge: env::var("GITHUB_AUTO_MERGE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true),
         }
+    }
+
+    pub fn github_enabled(&self) -> bool {
+        self.github_token
+            .as_ref()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false)
     }
 
     pub fn bind_addr(&self) -> String {

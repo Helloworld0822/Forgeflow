@@ -225,6 +225,10 @@ pub struct ProjectView {
     pub repo_url: Option<String>,
     pub state: PipelineState,
     pub stages: Vec<StageStatusView>,
+    pub progress_percent: u8,
+    pub pr_url: Option<String>,
+    pub merge_status: Option<String>,
+    pub github_repo: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -236,6 +240,27 @@ pub struct StageStatusView {
 
 impl From<&Project> for ProjectView {
     fn from(p: &Project) -> Self {
+        let pr_url = p
+            .stage_outputs
+            .get(&StageId::Implement)
+            .and_then(|m| m.get("pr_url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let merge_status = p
+            .stage_outputs
+            .get(&StageId::Deliver)
+            .and_then(|m| m.get("merge_status"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let github_repo = p
+            .stage_outputs
+            .get(&StageId::Ingest)
+            .and_then(|m| m.get("github_repo"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         Self {
             id: p.id.0,
             name: p.name.clone(),
@@ -248,7 +273,32 @@ impl From<&Project> for ProjectView {
                     status: p.stages.get(&stage).copied().unwrap_or(StageState::Queued),
                 })
                 .collect(),
+            progress_percent: p.progress_percent(),
+            pr_url,
+            merge_status,
+            github_repo,
             created_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectDetailView {
+    #[serde(flatten)]
+    pub view: ProjectView,
+    pub stage_outputs: HashMap<String, serde_json::Value>,
+}
+
+impl From<&Project> for ProjectDetailView {
+    fn from(p: &Project) -> Self {
+        let stage_outputs = p
+            .stage_outputs
+            .iter()
+            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+            .collect();
+        Self {
+            view: ProjectView::from(p),
+            stage_outputs,
         }
     }
 }

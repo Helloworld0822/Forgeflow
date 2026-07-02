@@ -1,10 +1,11 @@
 use crate::app::App;
-use crate::domain::{PipelineState, ProjectView, StageState};
+use crate::domain::{PipelineState, ProjectDetailView, ProjectView, StageState};
 use crate::error::{AutoForgeError, Result};
+use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::{run_inline, start_project_mq};
 use actix_multipart::Multipart;
 use actix_web::http::header;
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -15,13 +16,13 @@ pub async fn health(app: web::Data<Arc<App>>) -> HttpResponse {
         "service": "autoforge",
         "message_queue": app.queue.is_some(),
         "slack": app.slack.is_some(),
+        "github": app.github.is_some(),
+        "github_auto_merge": app.config.github_auto_merge,
     }))
 }
 
-pub async fn index() -> HttpResponse {
-    HttpResponse::Found()
-        .append_header((header::LOCATION, "/static/index.html"))
-        .finish()
+pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse> {
+    Ok(actix_files::NamedFile::open("static/index.html")?.into_response(&req))
 }
 
 pub async fn list_projects(app: web::Data<Arc<App>>) -> Result<HttpResponse> {
@@ -36,7 +37,7 @@ pub async fn get_project(app: web::Data<Arc<App>>, path: web::Path<Uuid>) -> Res
         .get_project(id)
         .await
         .ok_or_else(|| AutoForgeError::NotFound(format!("project {id}")))?;
-    Ok(HttpResponse::Ok().json(ProjectView::from(&project)))
+    Ok(HttpResponse::Ok().json(ProjectDetailView::from(&project)))
 }
 
 pub async fn create_project(
@@ -81,6 +82,15 @@ pub async fn create_project(
 
     let mut project = app.create_project(name, repo_url).await;
     project.pdf_bytes = Some(pdf);
+
+    // GitHub 프라이빗 레포 자동 생성 (repo_url 미지정 시)
+    if project.repo_url.is_none() {
+        ensure_project_repo(&app, &mut project).await?;
+        if project.repo_url.is_none() {
+            project.repo_url = app.config.default_repo_url.clone();
+        }
+    }
+
     project.state = PipelineState::Running;
     let project_id = project.id.0;
     app.store.save(&project).await?;
@@ -104,10 +114,15 @@ pub async fn create_project(
     Ok(HttpResponse::Accepted().json(serde_json::json!({
         "id": project_id,
         "state": project.state,
+        "repo_url": project.repo_url,
         "message": if app.queue.is_some() { "pipeline queued" } else { "pipeline started" },
         "mode": if app.queue.is_some() { "message_queue" } else { "inline" },
         "stream_url": format!("/v1/projects/{project_id}/stream"),
         "progress_percent": project.progress_percent(),
+        "github_auto_created": project.stage_outputs.get(&crate::domain::StageId::Ingest)
+            .and_then(|m| m.get("auto_created"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     })))
 }
 

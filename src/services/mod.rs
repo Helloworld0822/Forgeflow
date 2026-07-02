@@ -1,4 +1,5 @@
 pub mod artifacts;
+pub mod github;
 pub mod ingest;
 pub mod orchestrator;
 pub mod pipeline;
