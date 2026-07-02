@@ -1,5 +1,5 @@
-# Podman Compose — AutoForge 분산 배포
-# 사용: podman-compose up -d --build
+# Podman Compose — docker-compose.yml 와 동일
+# 사용: podman-compose up -d --build --scale worker=3
 
 version: "3.9"
 
@@ -20,10 +20,57 @@ x-app-env: &app-env
   GITHUB_AUTO_MERGE: ${GITHUB_AUTO_MERGE:-true}
 
 services:
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    image: localhost/autoforge-nginx:latest
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: localhost/autoforge-api:latest
+    command: ["serve"]
+    environment:
+      <<: *app-env
+      HOST: 0.0.0.0
+      PORT: "8080"
+    expose:
+      - "8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  orchestrator:
+    image: localhost/autoforge-api:latest
+    command: ["orchestrate"]
+    environment:
+      <<: *app-env
+      ORCHESTRATOR_ID: orchestrator-1
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: localhost/autoforge-api:latest
+    command: ["worker"]
+    environment:
+      <<: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   redis:
     image: docker.io/library/redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -43,46 +90,6 @@ services:
       - "9001:9001"
     volumes:
       - minio-data:/data
-
-  api:
-    build:
-      context: .
-      dockerfile: Containerfile
-    image: localhost/autoforge:latest
-    command: ["serve"]
-    ports:
-      - "8080:8080"
-    environment:
-      <<: *app-env
-      HOST: 0.0.0.0
-      PORT: "8080"
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  orchestrator:
-    image: localhost/autoforge:latest
-    command: ["orchestrate"]
-    environment:
-      <<: *app-env
-      ORCHESTRATOR_ID: orchestrator-1
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  worker:
-    image: localhost/autoforge:latest
-    command: ["worker"]
-    environment:
-      <<: *app-env
-    depends_on:
-      redis:
-        condition: service_healthy
-    deploy:
-      replicas: 3
-    restart: unless-stopped
 
 volumes:
   redis-data:

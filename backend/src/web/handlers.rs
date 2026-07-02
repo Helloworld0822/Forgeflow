@@ -5,7 +5,7 @@ use crate::services::github::ensure_project_repo;
 use crate::services::pipeline::{run_inline, start_project_mq};
 use actix_multipart::Multipart;
 use actix_web::http::header;
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{web, HttpResponse};
 use futures_util::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -19,10 +19,6 @@ pub async fn health(app: web::Data<Arc<App>>) -> HttpResponse {
         "github": app.github.is_some(),
         "github_auto_merge": app.config.github_auto_merge,
     }))
-}
-
-pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse> {
-    Ok(actix_files::NamedFile::open("static/index.html")?.into_response(&req))
 }
 
 pub async fn list_projects(app: web::Data<Arc<App>>) -> Result<HttpResponse> {

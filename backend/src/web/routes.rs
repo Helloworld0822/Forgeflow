@@ -4,7 +4,6 @@ use super::handlers;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/health", web::get().to(handlers::health))
-        .route("/", web::get().to(handlers::index))
         .service(
             web::scope("/v1")
                 .route("/projects", web::post().to(handlers::create_project))
