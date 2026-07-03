@@ -147,6 +147,14 @@ impl MessageQueue {
         self.ack(&self.events_stream, id).await
     }
 
+    pub async fn ping(&self) -> std::result::Result<(), String> {
+        let _: String = redis::cmd("PING")
+            .query_async(&mut self.conn.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     async fn ack(&self, stream: &str, id: &str) -> Result<()> {
         let _: i32 = redis::cmd("XACK")
             .arg(stream)

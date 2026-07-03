@@ -2,6 +2,7 @@ use crate::app::App;
 use crate::domain::{DailyLogSummary, DevopsPlanInput, PipelineState, ProjectDetailView, ProjectView, StageState};
 use crate::error::{AutoForgeError, Result};
 use crate::services::github::ensure_project_repo;
+use crate::services::health::{self, HealthReport};
 use crate::services::pipeline::{run_inline, start_project_mq};
 use actix_multipart::Multipart;
 use actix_web::http::header;
@@ -10,15 +11,23 @@ use futures_util::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Liveness — 프로세스 생존 확인 (의존성 프로브 없음)
 pub async fn health(app: web::Data<Arc<App>>) -> HttpResponse {
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "ok",
-        "service": "autoforge",
-        "message_queue": app.queue.is_some(),
-        "slack": app.slack.is_some(),
-        "github": app.github.is_some(),
-        "github_auto_merge": app.config.github_auto_merge,
-    }))
+    let mut report = HealthReport::liveness();
+    report.message_queue = app.queue.is_some();
+    report.worker_concurrency = app.config.worker_concurrency;
+    report.github_auto_merge = app.config.github_auto_merge;
+    HttpResponse::Ok().json(report)
+}
+
+/// Readiness — Redis / Cursor / Stitch 연결 확인
+pub async fn health_ready(app: web::Data<Arc<App>>) -> HttpResponse {
+    let report = health::readiness(app.get_ref()).await;
+    if report.status == "unhealthy" {
+        HttpResponse::ServiceUnavailable().json(report)
+    } else {
+        HttpResponse::Ok().json(report)
+    }
 }
 
 pub async fn list_projects(app: web::Data<Arc<App>>) -> Result<HttpResponse> {

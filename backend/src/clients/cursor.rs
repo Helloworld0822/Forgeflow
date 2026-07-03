@@ -204,6 +204,26 @@ impl CursorClient {
             }
         }
     }
+
+    /// Cursor Cloud Agents API 연결 확인 (GET /v1/models)
+    pub async fn health_check(&self) -> std::result::Result<(), String> {
+        let resp = self
+            .http
+            .get(format!("{CURSOR_API_BASE}/v1/models"))
+            .basic_auth(&self.api_key, Some(""))
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(format!("HTTP {status}: {body}"))
+        }
+    }
 }
 
 #[derive(Debug, Default)]
