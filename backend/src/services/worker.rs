@@ -562,7 +562,7 @@ fn build_design_prompt(inputs: &[ArtifactRef]) -> String {
 fn build_implement_prompt(inputs: &[ArtifactRef]) -> String {
     let has_devops = inputs.iter().any(|a| a.name.starts_with("devops_plan"));
     let devops_note = if has_devops {
-        "DevOps 계획서에 따라 Dockerfile, docker-compose.yml, CI/CD 워크플로우(.github/workflows), \
+        "DevOps 계획서에 따라 Containerfile, compose.yml, CI/CD 워크플로우(.github/workflows), \
          nginx/인프라 설정을 구현하세요. 배포 자동화를 포함하세요.\n"
     } else {
         ""

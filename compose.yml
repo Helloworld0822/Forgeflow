@@ -1,7 +1,8 @@
-# Podman Compose — docker-compose.yml 와 동일
-# 사용: podman-compose up -d --build --scale worker=3
+# AutoForge — Docker / Podman Compose (통합)
+# Docker:  docker compose up -d --build --scale worker=3  (포트 80: HOST_HTTP_PORT=80)
+# Podman (rootless): podman compose up -d --build  또는 ./scripts/podman-up.sh
 
-version: "3.9"
+name: autoforge
 
 x-app-env: &app-env
   MESSAGE_QUEUE_ENABLED: "true"
@@ -18,16 +19,16 @@ x-app-env: &app-env
   GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   GITHUB_ORG: ${GITHUB_ORG:-}
   GITHUB_AUTO_MERGE: ${GITHUB_AUTO_MERGE:-true}
-  PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
 
 services:
   nginx:
     build:
       context: .
-      dockerfile: nginx/Dockerfile
-    image: localhost/autoforge-nginx:latest
+      dockerfile: nginx/Containerfile
+    image: ${IMAGE_PREFIX:-}autoforge-nginx:latest
     ports:
-      - "80:80"
+      - "${HOST_HTTP_PORT:-8080}:80"
     depends_on:
       - api
     restart: unless-stopped
@@ -35,8 +36,8 @@ services:
   api:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    image: localhost/autoforge-api:latest
+      dockerfile: Containerfile
+    image: ${IMAGE_PREFIX:-}autoforge-api:latest
     command: ["serve"]
     environment:
       <<: *app-env
@@ -50,7 +51,7 @@ services:
     restart: unless-stopped
 
   orchestrator:
-    image: localhost/autoforge-api:latest
+    image: ${IMAGE_PREFIX:-}autoforge-api:latest
     command: ["orchestrate"]
     environment:
       <<: *app-env
@@ -61,7 +62,7 @@ services:
     restart: unless-stopped
 
   worker:
-    image: localhost/autoforge-api:latest
+    image: ${IMAGE_PREFIX:-}autoforge-api:latest
     command: ["worker"]
     environment:
       <<: *app-env
