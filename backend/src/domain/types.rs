@@ -73,7 +73,7 @@ pub struct ModelParam {
 impl ModelProfile {
     pub fn summarize() -> Self {
         Self {
-            model_id: "claude-4.6-sonnet-high-thinking".into(),
+            model_id: "claude-haiku-4-5".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -81,7 +81,7 @@ impl ModelProfile {
 
     pub fn architect() -> Self {
         Self {
-            model_id: "claude-fable-5-thinking-high".into(),
+            model_id: "claude-4.6-sonnet-high-thinking".into(),
             mode: AgentMode::Plan,
             params: vec![],
         }

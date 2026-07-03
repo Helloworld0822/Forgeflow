@@ -232,10 +232,10 @@ export function NewProjectPage() {
         <h3>자동화 파이프라인</h3>
         <ol className="pipeline-list">
           <li>
-            <strong>Summarize</strong> — Sonnet이 PDF + DevOps 계획서 통합 요약
+            <strong>Summarize</strong> — Haiku가 PDF + DevOps 계획서 통합 요약
           </li>
           <li>
-            <strong>Architect</strong> — Fable이 아키텍처 & 인프라/CI/CD 설계
+            <strong>Architect</strong> — Sonnet이 아키텍처 & 인프라/CI/CD 설계
           </li>
           <li>
             <strong>Design</strong> — Stitch로 UI 디자인

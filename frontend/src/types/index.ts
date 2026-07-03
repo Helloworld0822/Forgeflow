@@ -84,12 +84,12 @@ export const STAGE_META: Record<
   summarize: {
     label: 'Summarize',
     description: '계획서 구조화 요약',
-    model: 'Sonnet',
+    model: 'Haiku',
   },
   architect: {
     label: 'Architect',
     description: '시스템 아키텍처 & 상세 기획',
-    model: 'Fable',
+    model: 'Sonnet',
   },
   design: { label: 'Design', description: 'UI 디자인 생성', model: 'Stitch' },
   implement: {
