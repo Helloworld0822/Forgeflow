@@ -55,6 +55,7 @@ pub async fn execute_stage(app: &App, project: &Project, stage: StageId) -> Resu
             .or(app.config.default_repo_url.clone()),
         stage_outputs: project.stage_outputs.clone(),
         pr_url,
+        model_config: project.model_config.clone(),
     };
 
     executor.execute(&ctx).await
