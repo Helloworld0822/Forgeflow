@@ -29,6 +29,7 @@ export interface Project {
   merge_status: string | null;
   github_repo: string | null;
   has_devops_plan: boolean;
+  model_config?: PipelineModelConfig;
   created_at: string;
 }
 
@@ -87,6 +88,26 @@ export interface HealthResponse {
   slack: boolean;
   github: boolean;
   github_auto_merge: boolean;
+}
+
+export interface PipelineModelConfig {
+  summarize?: string;
+  architect?: string;
+  implement?: string;
+  verify?: string;
+  debug?: string;
+  security_patch?: string;
+  design_device_type?: string;
+}
+
+export interface CursorModel {
+  id: string;
+  name?: string | null;
+}
+
+export interface ModelsListResponse {
+  models: CursorModel[];
+  defaults: PipelineModelConfig;
 }
 
 export const STAGE_META: Record<

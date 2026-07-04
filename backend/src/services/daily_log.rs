@@ -152,7 +152,7 @@ pub fn render_markdown(project: &Project, log: &DailyLog) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{PipelineState, ProjectId};
+    use crate::domain::{PipelineModelConfig, PipelineState, ProjectId};
     use crate::services::orchestrator::DagScheduler;
     use std::collections::HashMap;
 
@@ -171,6 +171,7 @@ mod tests {
             slack_message_ts: None,
             created_at: Utc::now(),
             daily_logs: HashMap::new(),
+            model_config: PipelineModelConfig::default(),
         }
     }
 

@@ -1,6 +1,7 @@
 use crate::app::App;
 use crate::domain::{
-    DailyLogSummary, DevopsPlanInput, PipelineState, ProjectDetailView, ProjectView, StageState,
+    DailyLogSummary, DevopsPlanInput, PipelineModelConfig, PipelineState, ProjectDetailView,
+    ProjectView, StageState,
 };
 use crate::error::{AutoForgeError, Result};
 use crate::services::artifacts::{
@@ -65,6 +66,7 @@ pub async fn create_project(
     let mut repo_url: Option<String> = None;
     let mut pdf_bytes: Option<Vec<u8>> = None;
     let mut devops_plan = DevopsPlanInput::default();
+    let mut model_config = PipelineModelConfig::default();
     let max_upload = app.config.max_upload_bytes;
     let mut total_bytes: usize = 0;
 
@@ -130,6 +132,14 @@ pub async fn create_project(
                 devops_plan.content_type = field_content_type;
             }
             "plan" | "pdf" | "file" => pdf_bytes = Some(data),
+            "model_config" | "models" => {
+                let text = String::from_utf8_lossy(&data);
+                if !text.trim().is_empty() {
+                    model_config = serde_json::from_str(&text).map_err(|e| {
+                        AutoForgeError::BadRequest(format!("invalid model_config JSON: {e}"))
+                    })?;
+                }
+            }
             _ => {}
         }
     }
@@ -145,7 +155,7 @@ pub async fn create_project(
         return Err(AutoForgeError::BadRequest("invalid PDF file".into()));
     }
 
-    let mut project = app.create_project(name, repo_url).await;
+    let mut project = app.create_project(name, repo_url, model_config).await;
     project.pdf_bytes = Some(pdf);
     if devops_plan.has_content() {
         project.devops_plan = Some(devops_plan);
@@ -192,6 +202,23 @@ pub async fn create_project(
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         "has_devops_plan": project.devops_plan.as_ref().is_some_and(|d| d.has_content()),
+        "model_config": project.model_config,
+    })))
+}
+
+pub async fn list_models(app: web::Data<Arc<App>>) -> Result<HttpResponse> {
+    use crate::clients::cursor::CursorClient;
+    use crate::domain::PipelineModelConfig;
+
+    let models = app
+        .cursor
+        .list_models()
+        .await
+        .unwrap_or_else(|_| CursorClient::fallback_models());
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "models": models,
+        "defaults": PipelineModelConfig::defaults_view(),
     })))
 }
 

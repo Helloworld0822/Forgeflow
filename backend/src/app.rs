@@ -1,7 +1,7 @@
 use crate::clients::github::GitHubClient;
 use crate::clients::slack::SlackNotifier;
 use crate::config::Config;
-use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
+use crate::domain::{PipelineModelConfig, PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, LocalArtifactStore};
 use crate::services::orchestrator::DagScheduler;
 use crate::services::queue::MessageQueue;
@@ -94,7 +94,12 @@ impl App {
         })
     }
 
-    pub async fn create_project(&self, name: Option<String>, repo_url: Option<String>) -> Project {
+    pub async fn create_project(
+        &self,
+        name: Option<String>,
+        repo_url: Option<String>,
+        model_config: PipelineModelConfig,
+    ) -> Project {
         let id = ProjectId::new();
         let project = Project {
             id: id.clone(),
@@ -113,6 +118,7 @@ impl App {
             slack_message_ts: None,
             created_at: chrono::Utc::now(),
             daily_logs: HashMap::new(),
+            model_config,
         };
         let _ = self.store.save(&project).await;
         project

@@ -14,6 +14,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 .wrap(from_fn(require_api_key))
                 .route("/images", web::post().to(handlers::upload_image))
                 .route("/images", web::get().to(handlers::list_images))
+                .route("/models", web::get().to(handlers::list_models))
                 .route("/projects", web::post().to(handlers::create_project))
                 .route("/projects", web::get().to(handlers::list_projects))
                 .route("/projects/{id}", web::get().to(handlers::get_project))

@@ -1,6 +1,6 @@
 use crate::clients::cursor::{CreateAgentOpts, CursorClient};
 use crate::clients::stitch::StitchClient;
-use crate::domain::{ArtifactRef, ModelProfile, StageCommand, StageId};
+use crate::domain::{ArtifactRef, PipelineModelConfig, StageCommand, StageId};
 use crate::error::{AutoForgeError, Result};
 use crate::services::artifacts::ArtifactStore;
 use crate::services::ingest::{ingest_devops_plan, ingest_pdf};
@@ -21,6 +21,7 @@ pub struct StageContext {
     pub repo_url: Option<String>,
     pub stage_outputs: HashMap<StageId, serde_json::Value>,
     pub pr_url: Option<String>,
+    pub model_config: PipelineModelConfig,
 }
 
 #[derive(Debug)]
@@ -128,7 +129,7 @@ impl StageExecutor for SummarizeExecutor {
 
     async fn execute(&self, ctx: &StageContext) -> Result<StageOutput> {
         let prompt = build_summarize_prompt(&ctx.input);
-        let profile = ModelProfile::summarize();
+        let profile = ctx.model_config.profile_for(StageId::Summarize);
 
         let resp = ctx
             .cursor
@@ -179,7 +180,7 @@ impl StageExecutor for ArchitectExecutor {
 
     async fn execute(&self, ctx: &StageContext) -> Result<StageOutput> {
         let prompt = build_architect_prompt(&ctx.input);
-        let profile = ModelProfile::architect();
+        let profile = ctx.model_config.profile_for(StageId::Architect);
 
         let resp = ctx
             .cursor
@@ -223,7 +224,8 @@ impl StageExecutor for DesignExecutor {
 
     async fn execute(&self, ctx: &StageContext) -> Result<StageOutput> {
         let prompt = build_design_prompt(&ctx.input);
-        let screen = ctx.stitch.generate_screen(&prompt, "DESKTOP").await?;
+        let device_type = ctx.model_config.design_device_type();
+        let screen = ctx.stitch.generate_screen(&prompt, device_type).await?;
         let html = ctx.stitch.get_screen_html(&screen.id).await?;
 
         let artifact = ArtifactRef {
@@ -256,7 +258,7 @@ impl StageExecutor for ImplementExecutor {
             .ok_or_else(|| AutoForgeError::BadRequest("repo_url required".into()))?;
 
         let prompt = build_implement_prompt(&ctx.input);
-        let profile = ModelProfile::implement();
+        let profile = ctx.model_config.profile_for(StageId::Implement);
 
         let opts = CreateAgentOpts {
             repo_url: Some(repo_url),
@@ -307,7 +309,7 @@ impl StageExecutor for VerifyExecutor {
             .ok_or_else(|| AutoForgeError::BadRequest("repo_url required for verify".into()))?;
 
         let prompt = build_verify_prompt(ctx);
-        let profile = ModelProfile::verify();
+        let profile = ctx.model_config.profile_for(StageId::Verify);
         let opts = agent_opts(repo_url, ctx.pr_url.as_deref());
 
         let resp = ctx.cursor.create_agent(&prompt, &profile, opts).await?;
@@ -365,7 +367,7 @@ impl StageExecutor for DebugExecutor {
             .unwrap_or_else(|| serde_json::json!({ "passed": false }));
 
         let prompt = build_debug_prompt(ctx, &verify_meta);
-        let profile = ModelProfile::debug();
+        let profile = ctx.model_config.profile_for(StageId::Debug);
         let opts = agent_opts(repo_url, ctx.pr_url.as_deref());
 
         let resp = ctx.cursor.create_agent(&prompt, &profile, opts).await?;
@@ -420,7 +422,7 @@ impl StageExecutor for SecurityPatchExecutor {
         })?;
 
         let prompt = build_security_prompt(ctx);
-        let profile = ModelProfile::security_patch();
+        let profile = ctx.model_config.profile_for(StageId::SecurityPatch);
         let opts = agent_opts(repo_url, ctx.pr_url.as_deref());
 
         let resp = ctx.cursor.create_agent(&prompt, &profile, opts).await?;
