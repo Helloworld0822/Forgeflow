@@ -1,7 +1,7 @@
 use crate::clients::github::GitHubClient;
 use crate::clients::slack::SlackNotifier;
 use crate::config::Config;
-use crate::domain::{PipelineModelConfig, PipelineState, Project, ProjectId, StageId, StageState};
+use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, LocalArtifactStore};
 use crate::services::orchestrator::DagScheduler;
 use crate::services::queue::MessageQueue;
@@ -98,7 +98,9 @@ impl App {
         &self,
         name: Option<String>,
         repo_url: Option<String>,
-        model_config: PipelineModelConfig,
+        programming_language: Option<crate::domain::ProgrammingLanguage>,
+        language_mode: crate::domain::LanguageMode,
+        model_config: crate::domain::PipelineModelConfig,
     ) -> Project {
         let id = ProjectId::new();
         let project = Project {
@@ -113,6 +115,10 @@ impl App {
             scheduler: DagScheduler::with_quality(id, self.config.max_debug_cycles),
             pdf_bytes: None,
             devops_plan: None,
+            programming_language,
+            language_mode,
+            resolved_language: None,
+            architecture_clarifications: Vec::new(),
             stage_outputs: HashMap::new(),
             accumulated_artifacts: Vec::new(),
             slack_message_ts: None,
