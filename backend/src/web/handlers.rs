@@ -140,13 +140,12 @@ pub async fn create_project(
             "programming_language" | "language" => {
                 let value = String::from_utf8_lossy(&data).trim().to_lowercase();
                 if !value.is_empty() && value != "auto" {
-                    programming_language = Some(
-                        ProgrammingLanguage::from_str_loose(&value).ok_or_else(|| {
+                    programming_language =
+                        Some(ProgrammingLanguage::from_str_loose(&value).ok_or_else(|| {
                             AutoForgeError::BadRequest(format!(
                                 "unsupported programming_language: {value}"
                             ))
-                        })?,
-                    );
+                        })?);
                 }
             }
             "language_mode" => {
