@@ -42,7 +42,14 @@ fn build_cors(app: &App) -> Cors {
 pub async fn serve(app: Arc<App>) -> std::io::Result<()> {
     app.config.validate_and_warn();
     let bind = app.config.bind_addr();
-    let data = web::Data::new(app);
+    let data = web::Data::new(app.clone());
+
+    if app.project_git.is_some() {
+        let push_app = app.clone();
+        tokio::spawn(async move {
+            crate::services::project_git::run_daily_push_loop(push_app).await;
+        });
+    }
 
     tracing::info!(bind = %bind, "starting API server");
 

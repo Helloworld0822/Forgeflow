@@ -88,6 +88,20 @@ pub async fn apply_stage_output_async(
     stage: StageId,
     output: StageOutput,
 ) -> Result<PipelineOutcome> {
+    if let Some(git) = &app.project_git {
+        if let Err(e) = git
+            .commit_stage_artifacts(project.id.0, stage, &output.artifacts)
+            .await
+        {
+            tracing::warn!(
+                project_id = %project.id.0,
+                ?stage,
+                error = %e,
+                "git commit for stage artifacts failed"
+            );
+        }
+    }
+
     let outcome = apply_stage_output(project, stage, output)?;
 
     if stage == StageId::SecurityPatch {

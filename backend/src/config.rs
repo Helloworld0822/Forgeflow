@@ -37,6 +37,10 @@ pub struct Config {
     pub cors_allowed_origins: Option<Vec<String>>,
     /// 업로드 최대 크기 (bytes, 기본 50MB)
     pub max_upload_bytes: usize,
+    /// 파이프라인 산출물 생성 시 프로젝트별 git 자동 커밋
+    pub git_auto_commit: bool,
+    /// 일일 git push 시각 (UTC, 0–23)
+    pub git_daily_push_hour_utc: u8,
 }
 
 impl Config {
@@ -92,6 +96,13 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(50 * 1024 * 1024),
+            git_auto_commit: env::var("GIT_AUTO_COMMIT")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true),
+            git_daily_push_hour_utc: env::var("GIT_DAILY_PUSH_HOUR_UTC")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(23),
         }
     }
 

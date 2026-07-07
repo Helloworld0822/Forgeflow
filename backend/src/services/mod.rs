@@ -8,6 +8,7 @@ pub mod ingest;
 pub mod language;
 pub mod orchestrator;
 pub mod pipeline;
+pub mod project_git;
 pub mod project_watch;
 pub mod quality;
 pub mod queue;

@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, LocalArtifactStore};
 use crate::services::orchestrator::DagScheduler;
+use crate::services::project_git::ProjectGitSync;
 use crate::services::project_watch::ProjectWatch;
 use crate::services::queue::MessageQueue;
 use crate::services::store::{MemoryStore, NotifyingStore, ProjectStore, RedisProjectStore};
@@ -23,6 +24,7 @@ pub struct App {
     pub slack: Option<Arc<SlackNotifier>>,
     pub github: Option<Arc<GitHubClient>>,
     pub watch: Arc<ProjectWatch>,
+    pub project_git: Option<Arc<ProjectGitSync>>,
 }
 
 impl App {
@@ -88,6 +90,16 @@ impl App {
             None
         };
 
+        let project_git = if config.git_auto_commit {
+            Some(Arc::new(ProjectGitSync::new(
+                config.artifacts_dir.clone(),
+                config.github_token.clone(),
+                config.git_daily_push_hour_utc,
+            )))
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             store,
@@ -99,6 +111,7 @@ impl App {
             slack,
             github,
             watch,
+            project_git,
         })
     }
 
