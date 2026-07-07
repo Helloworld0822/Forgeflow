@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getProject, subscribeProjectStream } from '../api/client';
+import { getProject } from '../api/client';
+import { subscribeProjectWebSocket } from '../api/ws';
 import type { ProjectDetail } from '../types';
 
-const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-
-export function useProject(id: string | undefined, pollMs = 3000) {
+export function useProject(id: string | undefined) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const streamActive = useRef(false);
+  const wsActive = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!id) return;
@@ -29,47 +28,28 @@ export function useProject(id: string | undefined, pollMs = 3000) {
     setLoading(true);
     refresh();
 
-    if (typeof EventSource !== 'undefined') {
-      streamActive.current = true;
-      const cleanup = subscribeProjectStream(
-        id,
-        (data) => {
-          const detail = data as ProjectDetail;
-          if (detail?.id) {
-            setProject(detail);
-            setError(null);
-            setLoading(false);
-            if (TERMINAL.has(detail.state)) {
-              streamActive.current = false;
-            }
-          }
-        },
-        () => {
-          streamActive.current = false;
-        },
-      );
-      return () => {
-        cleanup();
-        streamActive.current = false;
-      };
+    if (typeof WebSocket === 'undefined') {
+      return;
     }
+
+    wsActive.current = true;
+    const cleanup = subscribeProjectWebSocket(
+      id,
+      (data) => {
+        setProject(data);
+        setError(null);
+        setLoading(false);
+      },
+      () => {
+        wsActive.current = false;
+      },
+    );
+
+    return () => {
+      cleanup();
+      wsActive.current = false;
+    };
   }, [id, refresh]);
-
-  useEffect(() => {
-    if (!id) return;
-
-    const active =
-      project?.state === 'running' || project?.state === 'awaiting_input';
-    const intervalMs = active ? 2000 : pollMs;
-
-    const timer = setInterval(() => {
-      if (!streamActive.current) {
-        refresh();
-      }
-    }, intervalMs);
-
-    return () => clearInterval(timer);
-  }, [id, pollMs, project?.state, refresh]);
 
   return { project, loading, error, refresh };
 }

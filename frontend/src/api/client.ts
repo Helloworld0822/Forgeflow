@@ -181,23 +181,3 @@ export async function uploadImage(file: File): Promise<UploadImageResponse> {
 export async function listImages(): Promise<HostedImage[]> {
   return request<HostedImage[]>('/v1/images');
 }
-
-export function subscribeProjectStream(
-  id: string,
-  onUpdate: (data: unknown) => void,
-  onError?: (err: Event) => void,
-): () => void {
-  const source = new EventSource(`${API_BASE}/v1/projects/${id}/stream`);
-  source.addEventListener('status', (e) => {
-    try {
-      onUpdate(JSON.parse(e.data));
-    } catch {
-      onUpdate(e.data);
-    }
-  });
-  source.onerror = (e) => {
-    onError?.(e);
-    source.close();
-  };
-  return () => source.close();
-}

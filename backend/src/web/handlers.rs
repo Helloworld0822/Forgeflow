@@ -243,6 +243,7 @@ pub async fn create_project(
         "message": if app.queue.is_some() { "pipeline queued" } else { "pipeline started" },
         "mode": if app.queue.is_some() { "message_queue" } else { "inline" },
         "stream_url": format!("/v1/projects/{project_id}/stream"),
+        "ws_url": format!("/v1/projects/{project_id}/ws"),
         "progress_percent": project.progress_percent(),
         "github_auto_created": project.stage_outputs.get(&crate::domain::StageId::Ingest)
             .and_then(|m| m.get("auto_created"))

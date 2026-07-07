@@ -109,6 +109,7 @@ export interface CreateProjectResponse {
   message: string;
   mode: string;
   stream_url: string;
+  ws_url: string;
   progress_percent: number;
   github_auto_created: boolean;
   has_devops_plan: boolean;

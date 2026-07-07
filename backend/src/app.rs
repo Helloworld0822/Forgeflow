@@ -4,8 +4,9 @@ use crate::config::Config;
 use crate::domain::{PipelineState, Project, ProjectId, StageId, StageState};
 use crate::services::artifacts::{ArtifactStore, LocalArtifactStore};
 use crate::services::orchestrator::DagScheduler;
+use crate::services::project_watch::ProjectWatch;
 use crate::services::queue::MessageQueue;
-use crate::services::store::{MemoryStore, ProjectStore, RedisProjectStore};
+use crate::services::store::{MemoryStore, NotifyingStore, ProjectStore, RedisProjectStore};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,31 +22,37 @@ pub struct App {
     pub queue: Option<Arc<MessageQueue>>,
     pub slack: Option<Arc<SlackNotifier>>,
     pub github: Option<Arc<GitHubClient>>,
+    pub watch: Arc<ProjectWatch>,
 }
 
 impl App {
     /// 인메모리 모드 (단일 프로세스, MQ 없음)
     pub async fn new(config: Config) -> crate::Result<Self> {
-        let store: Arc<dyn ProjectStore> = Arc::new(MemoryStore::new());
-        Self::build(config, store, None, None).await
+        let watch = Arc::new(ProjectWatch::memory());
+        let inner: Arc<dyn ProjectStore> = Arc::new(MemoryStore::new());
+        let store = NotifyingStore::new(inner, watch.clone());
+        Self::build(config, store, watch, None, None).await
     }
 
     /// Redis MQ 모드 (Podman 멀티 컨테이너)
     pub async fn connect(config: Config) -> crate::Result<Self> {
-        let store: Arc<dyn ProjectStore> =
+        let watch = Arc::new(ProjectWatch::redis(config.redis_url.clone()));
+        let inner: Arc<dyn ProjectStore> =
             Arc::new(RedisProjectStore::connect(&config.redis_url).await?);
+        let store = NotifyingStore::new(inner, watch.clone());
         let queue = Some(MessageQueue::connect(&config).await?);
         let slack = if config.slack_enabled() {
             Some(Arc::new(SlackNotifier::new(&config)?))
         } else {
             None
         };
-        Self::build(config, store, queue, slack).await
+        Self::build(config, store, watch, queue, slack).await
     }
 
     async fn build(
         config: Config,
         store: Arc<dyn ProjectStore>,
+        watch: Arc<ProjectWatch>,
         queue: Option<Arc<MessageQueue>>,
         slack: Option<Arc<SlackNotifier>>,
     ) -> crate::Result<Self> {
@@ -91,6 +98,7 @@ impl App {
             queue,
             slack,
             github,
+            watch,
         })
     }
 

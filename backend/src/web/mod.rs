@@ -1,6 +1,7 @@
 mod auth;
 mod handlers;
 mod routes;
+mod ws;
 
 use crate::app::App;
 use crate::shutdown;
