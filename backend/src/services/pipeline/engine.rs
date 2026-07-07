@@ -398,6 +398,43 @@ pub async fn resume_project_pipeline(app: Arc<App>, project_id: Uuid) -> Result<
     }
 }
 
+/// 실패한 파이프라인을 지정 스테이지부터 재시작한다. model_config가 주어지면 병합한다.
+pub async fn prepare_pipeline_restart(
+    project: &mut Project,
+    from_stage: StageId,
+    model_config: Option<crate::domain::PipelineModelConfig>,
+) -> Result<()> {
+    if project.state != PipelineState::Failed {
+        return Err(AutoForgeError::BadRequest(format!(
+            "pipeline restart requires failed state (current: {:?})",
+            project.state
+        )));
+    }
+
+    project.scheduler.prepare_restart(from_stage);
+    project.stages.insert(from_stage, StageState::Queued);
+
+    if matches!(from_stage, StageId::Implement) {
+        for downstream in [
+            StageId::Verify,
+            StageId::Debug,
+            StageId::SecurityPatch,
+            StageId::Deliver,
+        ] {
+            if project.stages.get(&downstream) == Some(&StageState::Failed) {
+                project.stages.insert(downstream, StageState::Queued);
+            }
+        }
+    }
+
+    if let Some(config) = model_config {
+        project.model_config.merge_from(&config);
+    }
+
+    project.state = PipelineState::Running;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum PipelineOutcome {
     Continue,

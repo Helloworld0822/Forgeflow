@@ -31,6 +31,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                     web::post().to(handlers::cancel_project),
                 )
                 .route(
+                    "/projects/{id}/restart",
+                    web::post().to(handlers::restart_project),
+                )
+                .route(
                     "/projects/{id}/daily-logs",
                     web::get().to(handlers::list_daily_logs),
                 )

@@ -197,6 +197,31 @@ impl PipelineModelConfig {
             design_device_type: Some("DESKTOP".into()),
         }
     }
+
+    /// `other`의 Some 필드만 현재 설정에 병합한다.
+    pub fn merge_from(&mut self, other: &Self) {
+        if other.summarize.is_some() {
+            self.summarize = other.summarize.clone();
+        }
+        if other.architect.is_some() {
+            self.architect = other.architect.clone();
+        }
+        if other.implement.is_some() {
+            self.implement = other.implement.clone();
+        }
+        if other.verify.is_some() {
+            self.verify = other.verify.clone();
+        }
+        if other.debug.is_some() {
+            self.debug = other.debug.clone();
+        }
+        if other.security_patch.is_some() {
+            self.security_patch = other.security_patch.clone();
+        }
+        if other.design_device_type.is_some() {
+            self.design_device_type = other.design_device_type.clone();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -517,6 +542,15 @@ impl Project {
         self.name
             .clone()
             .unwrap_or_else(|| format!("Project {}", &self.id.0.to_string()[..8]))
+    }
+
+    /// 실패한 스테이지 (스케줄러 또는 stage map 기준)
+    pub fn failed_stage(&self) -> Option<StageId> {
+        self.scheduler.failed_stage().or_else(|| {
+            self.stages
+                .iter()
+                .find_map(|(stage, state)| (*state == StageState::Failed).then_some(*stage))
+        })
     }
 }
 

@@ -1,16 +1,19 @@
 use crate::app::App;
 use crate::domain::{
     ArchitectureAnswerInput, DailyLogSummary, DevopsPlanInput, LanguageMode, PipelineModelConfig,
-    PipelineState, ProgrammingLanguage, ProjectDetailView, ProjectView, StageState,
+    PipelineState, ProgrammingLanguage, ProjectDetailView, ProjectView, StageId, StageState,
 };
 use crate::error::{AutoForgeError, Result};
 use crate::services::artifacts::{
     detect_image_extension, guess_image_content_type, ArtifactStore, MEDIA_DIR,
 };
+use crate::services::daily_log::DailyEvent;
+use crate::services::daily_log_notify::record_daily_event;
 use crate::services::github::ensure_project_repo;
 use crate::services::health::{self, HealthReport};
 use crate::services::pipeline::engine::{
-    resume_project_pipeline, run_inline, submit_architecture_answers as apply_architecture_answers,
+    prepare_pipeline_restart, resume_project_pipeline, run_inline,
+    submit_architecture_answers as apply_architecture_answers,
 };
 use crate::services::pipeline::start_project_mq;
 use actix_multipart::Multipart;
@@ -357,6 +360,67 @@ pub async fn cancel_project(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "id": id,
         "state": "cancelled",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestartPipelineRequest {
+    #[serde(default)]
+    pub model_config: Option<PipelineModelConfig>,
+    #[serde(default)]
+    pub from_stage: Option<StageId>,
+}
+
+/// 실패한 파이프라인을 재시작한다. 선택적으로 AI 모델 설정을 갱신한다.
+pub async fn restart_project(
+    app: web::Data<Arc<App>>,
+    path: web::Path<Uuid>,
+    body: web::Json<RestartPipelineRequest>,
+) -> Result<HttpResponse> {
+    let id = path.into_inner();
+    let mut project = app
+        .get_project(id)
+        .await
+        .ok_or_else(|| AutoForgeError::NotFound(format!("project {id}")))?;
+
+    let from_stage = body
+        .from_stage
+        .or_else(|| project.failed_stage())
+        .ok_or_else(|| {
+            AutoForgeError::BadRequest(
+                "no failed stage to restart from (specify from_stage)".into(),
+            )
+        })?;
+
+    prepare_pipeline_restart(&mut project, from_stage, body.model_config.clone()).await?;
+    app.store.save(&project).await?;
+
+    let _ = record_daily_event(
+        app.get_ref(),
+        &mut project,
+        DailyEvent {
+            event: "pipeline_restarted",
+            stage: Some(from_stage),
+            message: format!("파이프라인 재시작 (from {from_stage:?})"),
+        },
+    )
+    .await;
+    app.store.save(&project).await?;
+
+    resume_project_pipeline(app.get_ref().clone(), id).await?;
+
+    let project = app
+        .get_project(id)
+        .await
+        .ok_or_else(|| AutoForgeError::Internal("project lost after restart".into()))?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "id": id,
+        "state": project.state,
+        "from_stage": from_stage.as_str(),
+        "message": "pipeline restarted",
+        "model_config": project.model_config,
+        "progress_percent": project.progress_percent(),
     })))
 }
 
