@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useProject } from '../hooks/useProject';
 import { ArchitectureQnAPanel } from '../components/ArchitectureQnAPanel';
+import { PipelineRestartPanel } from '../components/PipelineRestartPanel';
 import { PipelineStages } from '../components/PipelineStages';
 import { DailyLogPanel } from '../components/DailyLogPanel';
 import { cancelProject } from '../api/client';
@@ -15,6 +16,7 @@ import {
   StopCircle,
 } from 'lucide-react';
 import { useState } from 'react';
+import type { StageId } from '../types';
 
 const stateLabel: Record<string, string> = {
   pending: '대기',
@@ -74,6 +76,9 @@ export function ProjectDetailPage() {
 
   const name = project.name || `Project ${project.id.slice(0, 8)}`;
   const outputs = project.stage_outputs ?? {};
+  const failedStage = project.stages.find((s) => s.status === 'failed')?.stage as
+    | StageId
+    | undefined;
 
   return (
     <div className="mx-auto max-w-[1100px]">
@@ -144,6 +149,15 @@ export function ProjectDetailPage() {
             onSubmitted={refresh}
           />
         )}
+
+      {project.state === 'failed' && (
+        <PipelineRestartPanel
+          projectId={project.id}
+          failedStage={failedStage}
+          initialModelConfig={project.model_config}
+          onRestarted={refresh}
+        />
+      )}
 
       <section className="mb-5 rounded-lg border border-border bg-card p-5 md:p-6">
         <h3 className="mb-4 text-base font-medium">파이프라인 스테이지</h3>

@@ -49,10 +49,11 @@ const STAGE_FIELDS: {
 interface ModelConfigPanelProps {
   value: PipelineModelConfig;
   onChange: (value: PipelineModelConfig) => void;
+  defaultExpanded?: boolean;
 }
 
-export function ModelConfigPanel({ value, onChange }: ModelConfigPanelProps) {
-  const [expanded, setExpanded] = useState(false);
+export function ModelConfigPanel({ value, onChange, defaultExpanded = false }: ModelConfigPanelProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [models, setModels] = useState<CursorModel[]>([]);
   const [defaults, setDefaults] = useState<PipelineModelConfig>({});
   const [loading, setLoading] = useState(false);
