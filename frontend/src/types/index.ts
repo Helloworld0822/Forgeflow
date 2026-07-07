@@ -48,6 +48,14 @@ export interface StageStatus {
   status: StageState;
 }
 
+export interface ActivityEntry {
+  at: string;
+  event: string;
+  stage?: StageId;
+  message: string;
+  progress_percent: number;
+}
+
 export interface Project {
   id: string;
   name: string | null;
@@ -55,6 +63,9 @@ export interface Project {
   state: PipelineState;
   stages: StageStatus[];
   progress_percent: number;
+  current_stage?: StageId | null;
+  last_error?: string | null;
+  recent_activity?: ActivityEntry[];
   pr_url: string | null;
   merge_status: string | null;
   github_repo: string | null;

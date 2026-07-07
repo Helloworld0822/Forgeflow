@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useProject } from '../hooks/useProject';
 import { ArchitectureQnAPanel } from '../components/ArchitectureQnAPanel';
+import { PipelineActivityPanel } from '../components/PipelineActivityPanel';
 import { PipelineRestartPanel } from '../components/PipelineRestartPanel';
 import { PipelineStages } from '../components/PipelineStages';
 import { DailyLogPanel } from '../components/DailyLogPanel';
@@ -138,8 +139,27 @@ export function ProjectDetailPage() {
               style={{ width: `${project.progress_percent}%` }}
             />
           </div>
+          {project.state === 'running' && project.current_stage && (
+            <p className="mt-2 text-sm text-accent">
+              현재: {project.current_stage} 스테이지 실행 중
+            </p>
+          )}
         </div>
       </section>
+
+      {project.last_error && (
+        <div className="mb-5 rounded-lg border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+          <strong className="block font-medium">실패 원인</strong>
+          {project.last_error}
+        </div>
+      )}
+
+      <PipelineActivityPanel
+        activity={project.recent_activity ?? []}
+        state={project.state}
+        currentStage={project.current_stage}
+        loading={loading}
+      />
 
       {project.awaiting_architecture_input &&
         project.architecture_clarifications.length > 0 && (

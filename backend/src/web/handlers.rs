@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::domain::{
     ArchitectureAnswerInput, DailyLogSummary, DevopsPlanInput, LanguageMode, PipelineModelConfig,
-    PipelineState, ProgrammingLanguage, ProjectDetailView, ProjectView, StageId, StageState,
+    PipelineState, ProgrammingLanguage, ProjectDetailView, ProjectView, StageId,
 };
 use crate::error::{AutoForgeError, Result};
 use crate::services::artifacts::{
@@ -19,9 +19,10 @@ use crate::services::pipeline::start_project_mq;
 use actix_multipart::Multipart;
 use actix_web::http::header;
 use actix_web::{web, HttpResponse};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Liveness — 프로세스 생존 확인 (의존성 프로브 없음)
@@ -307,41 +308,40 @@ pub async fn stream_project(
     path: web::Path<Uuid>,
 ) -> Result<HttpResponse> {
     let id = path.into_inner();
-    let project = app
-        .get_project(id)
-        .await
-        .ok_or_else(|| AutoForgeError::NotFound(format!("project {id}")))?;
+    if app.get_project(id).await.is_none() {
+        return Err(AutoForgeError::NotFound(format!("project {id}")));
+    }
 
-    let stages: Vec<_> = crate::domain::StageId::all()
-        .iter()
-        .map(|stage| {
-            let status = project
-                .stages
-                .get(stage)
-                .copied()
-                .unwrap_or(StageState::Queued);
-            serde_json::json!({
-                "stage": stage.as_str(),
-                "status": format!("{status:?}").to_lowercase(),
-            })
-        })
-        .collect();
+    let app = app.get_ref().clone();
+    let stream = stream::unfold((app, id, false), |(app, id, done)| async move {
+        if done {
+            return None;
+        }
 
-    let body = format!(
-        "event: status\ndata: {}\n\n",
-        serde_json::json!({
-            "project_id": id,
-            "state": project.state,
-            "progress_percent": project.progress_percent(),
-            "stages": stages,
-        })
-    );
+        let project = app.get_project(id).await?;
+        let view = ProjectDetailView::from(&project);
+        let body = format!(
+            "event: status\ndata: {}\n\n",
+            serde_json::to_string(&view).unwrap_or_default()
+        );
+
+        let terminal = matches!(
+            project.state,
+            PipelineState::Completed | PipelineState::Failed | PipelineState::Cancelled
+        );
+
+        if !terminal {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+
+        Some((Ok::<actix_web::web::Bytes, actix_web::Error>(actix_web::web::Bytes::from(body)), (app, id, terminal)))
+    });
 
     Ok(HttpResponse::Ok()
         .content_type("text/event-stream")
         .insert_header((header::CACHE_CONTROL, "no-cache"))
         .insert_header((header::CONNECTION, "keep-alive"))
-        .body(body))
+        .streaming(stream))
 }
 
 pub async fn cancel_project(

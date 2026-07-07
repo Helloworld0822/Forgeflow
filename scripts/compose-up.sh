@@ -55,6 +55,39 @@ compose_engine() {
   fi
 }
 
+# podman-compose가 만든 네트워크는 com.docker.compose.network 라벨이 없어
+# docker compose (DOCKER_HOST=podman.sock) 실행 시 실패한다.
+repair_mislabeled_compose_network() {
+  local engine="$1"
+  if [[ "$engine" != "podman" ]]; then
+    return 0
+  fi
+
+  local network_name project_name label
+  network_name="$(
+    DOCKER_HOST="$(podman_socket)" docker compose -f "$COMPOSE_FILE" config --format json 2>/dev/null \
+      | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('networks',{}).get('default',{}).get('name', c.get('name','') + '_default'))"
+  )" || return 0
+  [[ -n "$network_name" ]] || return 0
+
+  if ! podman network exists "$network_name" &>/dev/null; then
+    return 0
+  fi
+
+  label="$(podman network inspect "$network_name" --format '{{index .Labels "com.docker.compose.network"}}' 2>/dev/null || true)"
+  if [[ "$label" == "default" ]]; then
+    return 0
+  fi
+
+  project_name="${network_name%_default}"
+  echo "NOTE: network ${network_name} has stale compose labels (com.docker.compose.network=\"${label}\", expected \"default\")"
+  echo "==> Removing stale Podman Compose resources for project ${project_name}..."
+
+  podman ps -aq --filter "network=${network_name}" 2>/dev/null | xargs -r podman rm -f
+  podman pod rm -f "pod_${project_name}" 2>/dev/null || true
+  podman network rm -f "$network_name"
+}
+
 run_compose() {
   local engine
   engine="$(compose_engine)" || {
@@ -83,6 +116,8 @@ engine="$(compose_engine)" || {
 if [[ "$engine" == "podman" || "$engine" == "podman-compose" ]]; then
   apply_podman_port_defaults
 fi
+
+repair_mislabeled_compose_network "$engine"
 
 echo "==> Building and starting AutoForge stack (${engine}, ${COMPOSE_FILE})"
 run_compose up -d --build --scale "worker=${WORKER_SCALE}"

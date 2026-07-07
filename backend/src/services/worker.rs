@@ -154,10 +154,7 @@ impl StageExecutor for SummarizeExecutor {
             )
             .await?;
 
-        let text = run
-            .result
-            .and_then(|r| r.text)
-            .ok_or_else(|| AutoForgeError::StageFailed {
+        let text = run.result_text().ok_or_else(|| AutoForgeError::StageFailed {
                 stage: StageId::Summarize,
                 message: "empty agent response".into(),
             })?;
@@ -215,7 +212,7 @@ impl StageExecutor for ArchitectExecutor {
             )
             .await?;
 
-        let text = run.result.and_then(|r| r.text).unwrap_or_default();
+        let text = run.result_text().unwrap_or_default();
         let questions = parse_clarification_questions(&text).unwrap_or_default();
 
         if questions.is_empty() {
@@ -367,7 +364,7 @@ impl StageExecutor for VerifyExecutor {
             )
             .await?;
 
-        let text = run.result.and_then(|r| r.text).unwrap_or_default();
+        let text = run.result_text().unwrap_or_default();
         let report = VerifyReport::parse_from_agent_text(&text);
         let base = format!("projects/{}/verify", ctx.command.project_id.0);
 
@@ -425,7 +422,7 @@ impl StageExecutor for DebugExecutor {
             )
             .await?;
 
-        let text = run.result.and_then(|r| r.text).unwrap_or_default();
+        let text = run.result_text().unwrap_or_default();
         let report = DebugReport {
             fixes_applied: vec!["auto-debug via Codex".into()],
             files_changed: vec![],
@@ -480,7 +477,7 @@ impl StageExecutor for SecurityPatchExecutor {
             )
             .await?;
 
-        let text = run.result.and_then(|r| r.text).unwrap_or_default();
+        let text = run.result_text().unwrap_or_default();
         let report = SecurityReport::parse_from_agent_text(&text);
         let base = format!("projects/{}/security", ctx.command.project_id.0);
 
@@ -640,7 +637,7 @@ async fn run_architect_finalize_with_answers(
         )
         .await?;
 
-    let text = run.result.and_then(|r| r.text).unwrap_or_default();
+    let text = run.result_text().unwrap_or_default();
     let base = format!("projects/{}/architect", ctx.command.project_id.0);
     let spec = ctx
         .artifacts

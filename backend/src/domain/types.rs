@@ -81,7 +81,7 @@ impl ModelProfile {
 
     pub fn architect() -> Self {
         Self {
-            model_id: "claude-4.6-sonnet-high-thinking".into(),
+            model_id: "claude-sonnet-4-6".into(),
             mode: AgentMode::Plan,
             params: vec![],
         }
@@ -89,7 +89,7 @@ impl ModelProfile {
 
     pub fn implement() -> Self {
         Self {
-            model_id: "gpt-5.3-codex-high".into(),
+            model_id: "gpt-5.3-codex".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -97,7 +97,7 @@ impl ModelProfile {
 
     pub fn verify() -> Self {
         Self {
-            model_id: "gpt-5.3-codex-high".into(),
+            model_id: "gpt-5.3-codex".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -105,7 +105,7 @@ impl ModelProfile {
 
     pub fn debug() -> Self {
         Self {
-            model_id: "gpt-5.3-codex-high".into(),
+            model_id: "gpt-5.3-codex".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -113,7 +113,7 @@ impl ModelProfile {
 
     pub fn security_patch() -> Self {
         Self {
-            model_id: "claude-fable-5-thinking-high".into(),
+            model_id: "claude-fable-5".into(),
             mode: AgentMode::Agent,
             params: vec![],
         }
@@ -552,6 +552,48 @@ impl Project {
                 .find_map(|(stage, state)| (*state == StageState::Failed).then_some(*stage))
         })
     }
+
+    /// 현재 실행 중인 스테이지
+    pub fn current_stage(&self) -> Option<StageId> {
+        self.stages
+            .iter()
+            .find_map(|(stage, state)| (*state == StageState::Running).then_some(*stage))
+    }
+
+    /// 최근 파이프라인 활동 (시간순, 최신 항목이 마지막)
+    pub fn recent_activity(&self, limit: usize) -> Vec<DailyLogEntry> {
+        let mut entries: Vec<_> = self
+            .daily_logs
+            .values()
+            .flat_map(|log| log.entries.iter().cloned())
+            .collect();
+        entries.sort_by_key(|e| e.at);
+        if entries.len() > limit {
+            entries.split_off(entries.len() - limit)
+        } else {
+            entries
+        }
+    }
+
+    /// 가장 최근 실패 메시지 (daily log 기준)
+    pub fn last_error_message(&self) -> Option<String> {
+        self.daily_logs
+            .values()
+            .flat_map(|log| log.entries.iter())
+            .filter(|e| e.event.contains("failed"))
+            .max_by_key(|e| e.at)
+            .map(|e| e.message.clone())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivityEntryView {
+    pub at: DateTime<Utc>,
+    pub event: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<StageId>,
+    pub message: String,
+    pub progress_percent: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -562,6 +604,11 @@ pub struct ProjectView {
     pub state: PipelineState,
     pub stages: Vec<StageStatusView>,
     pub progress_percent: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_stage: Option<StageId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub recent_activity: Vec<ActivityEntryView>,
     pub pr_url: Option<String>,
     pub merge_status: Option<String>,
     pub github_repo: Option<String>,
@@ -618,6 +665,19 @@ impl From<&Project> for ProjectView {
                 })
                 .collect(),
             progress_percent: p.progress_percent(),
+            current_stage: p.current_stage(),
+            last_error: p.last_error_message(),
+            recent_activity: p
+                .recent_activity(30)
+                .into_iter()
+                .map(|e| ActivityEntryView {
+                    at: e.at,
+                    event: e.event,
+                    stage: e.stage,
+                    message: e.message,
+                    progress_percent: e.progress_percent,
+                })
+                .collect(),
             pr_url,
             merge_status,
             github_repo,
