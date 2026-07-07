@@ -267,8 +267,27 @@ impl StageExecutor for DesignExecutor {
     async fn execute(&self, ctx: &StageContext) -> Result<StageOutput> {
         let prompt = build_design_prompt(&ctx.input);
         let device_type = ctx.model_config.design_device_type();
-        let screen = ctx.stitch.generate_screen(&prompt, device_type).await?;
-        let html = ctx.stitch.get_screen_html(&screen.id).await?;
+
+        let existing_stitch_project = ctx
+            .stage_outputs
+            .get(&StageId::Design)
+            .and_then(|v| v.get("stitch_project_id"))
+            .and_then(|v| v.as_str());
+
+        let project_title = format!("AutoForge {}", ctx.command.project_id.0);
+        let stitch_project_id = ctx
+            .stitch
+            .ensure_project(&project_title, existing_stitch_project)
+            .await?;
+
+        let screen = ctx
+            .stitch
+            .generate_screen(&stitch_project_id, &prompt, device_type)
+            .await?;
+        let html = ctx
+            .stitch
+            .get_screen_html(&stitch_project_id, &screen.id)
+            .await?;
 
         let artifact = ArtifactRef {
             name: format!("screens/{}.html", screen.id),
@@ -280,7 +299,11 @@ impl StageExecutor for DesignExecutor {
 
         Ok(StageOutput {
             artifacts: vec![artifact],
-            metadata: serde_json::json!({ "screen_id": screen.id }),
+            metadata: serde_json::json!({
+                "screen_id": screen.id,
+                "screen_name": screen.name,
+                "stitch_project_id": stitch_project_id,
+            }),
         })
     }
 }
