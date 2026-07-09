@@ -7,6 +7,7 @@ import { Loader2, RotateCcw } from 'lucide-react';
 interface PipelineRestartPanelProps {
   projectId: string;
   failedStage?: StageId;
+  cancelled?: boolean;
   initialModelConfig?: PipelineModelConfig;
   onRestarted: () => void;
 }
@@ -14,6 +15,7 @@ interface PipelineRestartPanelProps {
 export function PipelineRestartPanel({
   projectId,
   failedStage,
+  cancelled = false,
   initialModelConfig,
   onRestarted,
 }: PipelineRestartPanelProps) {
@@ -50,7 +52,9 @@ export function PipelineRestartPanel({
             파이프라인 재시작
           </h3>
           <p className="mt-1 text-sm text-muted">
-            {failedLabel
+            {cancelled
+              ? '취소된 파이프라인입니다. AI 모델을 변경한 뒤 다시 시작할 수 있습니다.'
+              : failedLabel
               ? `${failedLabel} 단계에서 실패했습니다. AI 모델을 변경한 뒤 재시작할 수 있습니다.`
               : 'AI 모델을 변경한 뒤 파이프라인을 재시작할 수 있습니다.'}
           </p>

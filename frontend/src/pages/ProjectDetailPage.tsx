@@ -170,10 +170,11 @@ export function ProjectDetailPage() {
           />
         )}
 
-      {project.state === 'failed' && (
+      {(project.state === 'failed' || project.state === 'cancelled') && (
         <PipelineRestartPanel
           projectId={project.id}
           failedStage={failedStage}
+          cancelled={project.state === 'cancelled'}
           initialModelConfig={project.model_config}
           onRestarted={refresh}
         />
