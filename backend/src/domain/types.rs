@@ -544,6 +544,17 @@ impl Project {
             .unwrap_or_else(|| format!("Project {}", &self.id.0.to_string()[..8]))
     }
 
+    /// 실패·취소된 프로젝트 재시작 시 기본 스테이지
+    pub fn restart_stage(&self) -> Option<StageId> {
+        if let Some(stage) = self.failed_stage() {
+            return Some(stage);
+        }
+        if self.state == PipelineState::Cancelled {
+            return self.current_stage().or(Some(StageId::Ingest));
+        }
+        None
+    }
+
     /// 실패한 스테이지 (스케줄러 또는 stage map 기준)
     pub fn failed_stage(&self) -> Option<StageId> {
         self.scheduler.failed_stage().or_else(|| {

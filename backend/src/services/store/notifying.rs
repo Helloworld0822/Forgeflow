@@ -1,4 +1,4 @@
-use super::{ProjectStore, ArcStore};
+use super::{ArcStore, ProjectStore};
 use crate::domain::Project;
 use crate::error::Result;
 use crate::services::project_watch::ProjectWatch;
@@ -13,8 +13,8 @@ pub struct NotifyingStore {
 }
 
 impl NotifyingStore {
-    pub fn new(inner: ArcStore, watch: Arc<ProjectWatch>) -> Arc<dyn ProjectStore> {
-        Arc::new(Self { inner, watch })
+    pub fn new(inner: ArcStore, watch: Arc<ProjectWatch>) -> Self {
+        Self { inner, watch }
     }
 }
 

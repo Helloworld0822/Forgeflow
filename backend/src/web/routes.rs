@@ -24,10 +24,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                     "/projects/{id}/architecture-answers",
                     web::post().to(handlers::submit_architecture_answers),
                 )
-                .route(
-                    "/projects/{id}/ws",
-                    web::get().to(ws::project_websocket),
-                )
+                .route("/projects/{id}/ws", web::get().to(ws::project_websocket))
                 .route(
                     "/projects/{id}/stream",
                     web::get().to(handlers::stream_project),

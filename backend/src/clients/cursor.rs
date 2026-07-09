@@ -99,7 +99,9 @@ impl GetRunResponse {
     }
 }
 
-fn deserialize_run_result<'de, D>(deserializer: D) -> std::result::Result<Option<RunResult>, D::Error>
+fn deserialize_run_result<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<RunResult>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -111,10 +113,7 @@ where
             git: None,
         }),
         Some(serde_json::Value::Object(obj)) => {
-            let text = obj
-                .get("text")
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            let text = obj.get("text").and_then(|v| v.as_str()).map(String::from);
             let git = obj
                 .get("git")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());

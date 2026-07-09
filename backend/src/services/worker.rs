@@ -154,7 +154,9 @@ impl StageExecutor for SummarizeExecutor {
             )
             .await?;
 
-        let text = run.result_text().ok_or_else(|| AutoForgeError::StageFailed {
+        let text = run
+            .result_text()
+            .ok_or_else(|| AutoForgeError::StageFailed {
                 stage: StageId::Summarize,
                 message: "empty agent response".into(),
             })?;

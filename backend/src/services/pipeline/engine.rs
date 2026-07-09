@@ -418,9 +418,12 @@ pub async fn prepare_pipeline_restart(
     from_stage: StageId,
     model_config: Option<crate::domain::PipelineModelConfig>,
 ) -> Result<()> {
-    if project.state != PipelineState::Failed {
+    if !matches!(
+        project.state,
+        PipelineState::Failed | PipelineState::Cancelled
+    ) {
         return Err(AutoForgeError::BadRequest(format!(
-            "pipeline restart requires failed state (current: {:?})",
+            "pipeline restart requires failed or cancelled state (current: {:?})",
             project.state
         )));
     }

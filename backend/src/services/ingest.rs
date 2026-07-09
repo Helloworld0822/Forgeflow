@@ -86,8 +86,7 @@ fn extract_text_pdftotext(bytes: &[u8]) -> Result<String> {
 
     if text.trim().is_empty() {
         return Err(AutoForgeError::Ingest(
-            "no extractable text — scanned PDF may need OCR (use a text-based PDF export)"
-                .into(),
+            "no extractable text — scanned PDF may need OCR (use a text-based PDF export)".into(),
         ));
     }
 

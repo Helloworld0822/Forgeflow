@@ -27,7 +27,9 @@ impl ProjectGitSync {
     }
 
     pub fn project_dir(&self, project_id: Uuid) -> PathBuf {
-        self.artifacts_dir.join("projects").join(project_id.to_string())
+        self.artifacts_dir
+            .join("projects")
+            .join(project_id.to_string())
     }
 
     /// 스테이지 산출물마다 개별 커밋을 생성한다.
@@ -60,10 +62,7 @@ impl ProjectGitSync {
                 continue;
             }
             let message = format!("{}: add {}", stage.as_str(), rel);
-            if self
-                .commit_file(&project_dir, rel, &message)
-                .await?
-            {
+            if self.commit_file(&project_dir, rel, &message).await? {
                 committed += 1;
                 info!(%project_id, ?stage, file = %rel, "git commit created for artifact");
             }
@@ -94,7 +93,8 @@ impl ProjectGitSync {
             return Ok(false);
         }
 
-        self.run_git(&project_dir, &["branch", "-M", "main"]).await?;
+        self.run_git(&project_dir, &["branch", "-M", "main"])
+            .await?;
         match self
             .run_git(&project_dir, &["push", "-u", "origin", "main"])
             .await
@@ -120,12 +120,7 @@ impl ProjectGitSync {
     }
 
     /// 단일 상대 경로 파일 커밋 (일일 경과 등).
-    pub async fn commit_path(
-        &self,
-        project_id: Uuid,
-        rel: &str,
-        message: &str,
-    ) -> Result<bool> {
+    pub async fn commit_path(&self, project_id: Uuid, rel: &str, message: &str) -> Result<bool> {
         let project_dir = self.project_dir(project_id);
         if !project_dir.join(rel).exists() {
             return Ok(false);
@@ -139,8 +134,10 @@ impl ProjectGitSync {
             return Ok(());
         }
         self.run_git(dir, &["init"]).await?;
-        self.run_git(dir, &["config", "user.email", "autoforge@local"]).await?;
-        self.run_git(dir, &["config", "user.name", "AutoForge"]).await?;
+        self.run_git(dir, &["config", "user.email", "autoforge@local"])
+            .await?;
+        self.run_git(dir, &["config", "user.name", "AutoForge"])
+            .await?;
         info!(dir = %dir.display(), "initialized project git repository");
         Ok(())
     }
@@ -217,10 +214,14 @@ impl ProjectGitSync {
 fn authenticated_remote_url(remote_url: &str, token: &str) -> Result<String> {
     let url = remote_url.trim_end_matches('/').trim_end_matches(".git");
     if let Some(rest) = url.strip_prefix("https://github.com/") {
-        return Ok(format!("https://x-access-token:{token}@github.com/{rest}.git"));
+        return Ok(format!(
+            "https://x-access-token:{token}@github.com/{rest}.git"
+        ));
     }
     if let Some(rest) = url.strip_prefix("git@github.com:") {
-        return Ok(format!("https://x-access-token:{token}@github.com/{rest}.git"));
+        return Ok(format!(
+            "https://x-access-token:{token}@github.com/{rest}.git"
+        ));
     }
     Err(AutoForgeError::BadRequest(format!(
         "unsupported remote for git push: {remote_url}"
@@ -250,10 +251,7 @@ pub async fn run_daily_push_loop(app: std::sync::Arc<crate::app::App>) {
     }
 }
 
-pub async fn push_all_projects(
-    app: &crate::app::App,
-    git: &ProjectGitSync,
-) -> Result<usize> {
+pub async fn push_all_projects(app: &crate::app::App, git: &ProjectGitSync) -> Result<usize> {
     let projects = app.store.list().await?;
     let mut pushed = 0usize;
 
@@ -313,11 +311,7 @@ mod tests {
 
     #[test]
     fn authenticated_remote_url_https() {
-        let url = authenticated_remote_url(
-            "https://github.com/acme/my-app",
-            "ghp_test",
-        )
-        .unwrap();
+        let url = authenticated_remote_url("https://github.com/acme/my-app", "ghp_test").unwrap();
         assert!(url.contains("x-access-token:ghp_test@github.com/acme/my-app.git"));
     }
 

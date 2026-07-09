@@ -106,17 +106,15 @@ impl ProjectWatch {
                     .subscribe(ALL_CHANNEL)
                     .await
                     .map_err(|e| AutoForgeError::Queue(e.to_string()))?;
-                Ok(WatchSubscription::Redis {
-                    pubsub,
-                    project_id,
-                })
+                Ok(WatchSubscription::Redis { pubsub, project_id })
             }
         }
     }
 }
 
 async fn publish_redis(redis_url: &str, project_id: Uuid) -> Result<()> {
-    let client = redis::Client::open(redis_url).map_err(|e| AutoForgeError::Queue(e.to_string()))?;
+    let client =
+        redis::Client::open(redis_url).map_err(|e| AutoForgeError::Queue(e.to_string()))?;
     let mut conn = client
         .get_multiplexed_async_connection()
         .await

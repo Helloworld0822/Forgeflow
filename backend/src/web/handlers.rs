@@ -208,9 +208,11 @@ pub async fn create_project(
         project.devops_plan = Some(devops_plan);
     }
 
-    // GitHub 프라이빗 레포 자동 생성 (repo_url 미지정 시)
+    // GitHub 프라이빗 레포 자동 생성 (repo_url 미지정 시). 실패해도 프로젝트 생성은 계속한다.
     if project.repo_url.is_none() {
-        ensure_project_repo(&app, &mut project).await?;
+        if let Err(e) = ensure_project_repo(&app, &mut project).await {
+            tracing::warn!(error = %e, "github auto-repo creation failed; continuing without auto repo");
+        }
         if project.repo_url.is_none() {
             project.repo_url = app.config.default_repo_url.clone();
         }
@@ -335,7 +337,10 @@ pub async fn stream_project(
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
 
-        Some((Ok::<actix_web::web::Bytes, actix_web::Error>(actix_web::web::Bytes::from(body)), (app, id, terminal)))
+        Some((
+            Ok::<actix_web::web::Bytes, actix_web::Error>(actix_web::web::Bytes::from(body)),
+            (app, id, terminal),
+        ))
     });
 
     Ok(HttpResponse::Ok()
@@ -386,11 +391,9 @@ pub async fn restart_project(
 
     let from_stage = body
         .from_stage
-        .or_else(|| project.failed_stage())
+        .or_else(|| project.restart_stage())
         .ok_or_else(|| {
-            AutoForgeError::BadRequest(
-                "no failed stage to restart from (specify from_stage)".into(),
-            )
+            AutoForgeError::BadRequest("no stage to restart from (specify from_stage)".into())
         })?;
 
     prepare_pipeline_restart(&mut project, from_stage, body.model_config.clone()).await?;
