@@ -119,6 +119,28 @@ fi
 
 repair_mislabeled_compose_network "$engine"
 
+bootstrap_rabbitmq_data() {
+  if [[ "$engine" != "podman" && "$engine" != "podman-compose" ]]; then
+    return 0
+  fi
+
+  local data_dir="${RABBITMQ_DATA_DIR:-data/rabbitmq}"
+  mkdir -p "$data_dir"
+
+  # Fresh bind mount: rootless Podman copy-up can leave .erlang.cookie owned by the host user.
+  if [[ -d "$data_dir/mnesia" ]]; then
+    return 0
+  fi
+
+  echo "==> Bootstrapping RabbitMQ data in ${data_dir} (rootless Podman)..."
+  podman run --rm --user 0:0 \
+    -v "$(pwd)/${data_dir}:/var/lib/rabbitmq" \
+    docker.io/library/rabbitmq:3-management-alpine \
+    sh -c 'rabbitmq-server -detached; for i in $(seq 1 30); do rabbitmq-diagnostics -q ping && exit 0; sleep 1; done; exit 1'
+}
+
+bootstrap_rabbitmq_data
+
 echo "==> Building and starting AutoForge stack (${engine}, ${COMPOSE_FILE})"
 run_compose up -d --build --scale "worker=${WORKER_SCALE}"
 
