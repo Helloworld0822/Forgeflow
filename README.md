@@ -29,12 +29,12 @@ nginx/Containerfile
                            │
                     orchestrator + worker×N
                            │
-                    redis + artifacts-data(volume)
+                    redis (store) + rabbitmq (MQ) + artifacts-data(volume)
 ```
 
 - **nginx**: 프론트엔드 정적 파일 서빙 + API 프록시
 - **api**: Rust REST API (프론트엔드 정적 파일 미포함)
-- **orchestrator / worker**: Redis Streams 기반 분산 파이프라인
+- **orchestrator / worker**: RabbitMQ 기반 분산 파이프라인
 
 ## 빠른 시작 (Docker / Podman Compose)
 
@@ -139,7 +139,7 @@ curl -X POST http://localhost/v1/images \
 - **GitHub 자동화**: `GITHUB_TOKEN`, `GITHUB_ORG`, `GITHUB_AUTO_MERGE`
 - **보안**: `API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_UPLOAD_BYTES` — 운영 배포 전 반드시 확인
 - **아티팩트/이미지 저장소 (로컬 디스크)**: `ARTIFACTS_DIR`, `MAX_IMAGE_BYTES`
-- **Redis MQ (분산 모드)**: `MESSAGE_QUEUE_ENABLED`, `REDIS_URL` 등 — 기본값은 단일 프로세스(false)
+- **RabbitMQ (분산 모드)**: `MESSAGE_QUEUE_ENABLED`, `RABBITMQ_URL` 등 — 기본값은 단일 프로세스(false). Redis는 프로젝트 스토어/알림용
 - **Slack 알림**: `SLACK_WEBHOOK_URL` 또는 `SLACK_BOT_TOKEN`+`SLACK_CHANNEL`
 
 서버 기동 시 누락되거나 위험한 설정(예: `API_KEY` 미설정, `CURSOR_API_KEY` 비어있음)은

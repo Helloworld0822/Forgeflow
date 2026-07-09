@@ -7,10 +7,15 @@ name: autoforge
 x-app-env: &app-env
   MESSAGE_QUEUE_ENABLED: "true"
   REDIS_URL: redis://redis:6379
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-autoforge}:${RABBITMQ_PASSWORD:-autoforge}@rabbitmq:5672/%2F
+  QUEUE_COMMANDS_STREAM: autoforge.commands
+  QUEUE_EVENTS_STREAM: autoforge.events
   ARTIFACTS_DIR: /data/artifacts
   MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-10485760}
   CURSOR_API_KEY: ${CURSOR_API_KEY:-}
   STITCH_API_KEY: ${STITCH_API_KEY:-}
+  STITCH_ACCESS_TOKEN: ${STITCH_ACCESS_TOKEN:-}
+  GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
   SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
   SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
   SLACK_CHANNEL: ${SLACK_CHANNEL:-}
@@ -46,7 +51,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,6 +78,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/ready"]
@@ -97,6 +104,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
     <<: *worker-limits
 
@@ -109,6 +118,8 @@ services:
       - artifacts-data:/data/artifacts
     depends_on:
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     restart: unless-stopped
     <<: *worker-limits
@@ -127,6 +138,25 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
+
+  rabbitmq:
+    image: docker.io/library/rabbitmq:3-management-alpine
+    user: "0:0"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-autoforge}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-autoforge}
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
 volumes:
   redis-data:
