@@ -1,5 +1,10 @@
 use std::env;
 
+fn stitch_bearer_available(static_token: &str) -> bool {
+    crate::clients::stitch_token::StitchTokenProvider::from_env(static_token.to_string(), None)
+        .can_provide_token()
+}
+
 fn optional_non_empty(value: Option<String>) -> Option<String> {
     value.and_then(|v| {
         let trimmed = v.trim();
@@ -19,7 +24,7 @@ pub struct Config {
     pub stitch_api_key: String,
     /// Stitch AI 생성(generate_screen 등)용 OAuth Bearer 토큰. API 키만으로는 생성 불가.
     pub stitch_access_token: String,
-    /// Bearer 인증 시 GCP 과금 프로젝트 (X-Goog-User-Project)
+    /// Bearer 인증 시 GCP 과금/quota 프로젝트 (X-Goog-User-Project)
     pub google_cloud_project: Option<String>,
     /// 파이프라인 산출물 및 이미지 호스팅 파일을 저장할 로컬 디렉터리
     pub artifacts_dir: String,
@@ -75,7 +80,8 @@ impl Config {
                 env::var("GOOGLE_CLOUD_PROJECT")
                     .or_else(|_| env::var("GCLOUD_PROJECT"))
                     .ok(),
-            ),
+            )
+            .or_else(crate::clients::stitch_token::resolve_gcloud_config_project),
             artifacts_dir: env::var("ARTIFACTS_DIR").unwrap_or_else(|_| "./data/artifacts".into()),
             max_image_bytes: env::var("MAX_IMAGE_BYTES")
                 .ok()
@@ -165,12 +171,23 @@ impl Config {
         if self.cursor_api_key.is_empty() {
             tracing::warn!("CURSOR_API_KEY is not set — Summarize/Architect/Implement/Verify/Debug stages will fail");
         }
-        if self.stitch_api_key.is_empty() && self.stitch_access_token.is_empty() {
-            tracing::warn!("STITCH_API_KEY / STITCH_ACCESS_TOKEN not set — Design stage will fail");
-        } else if !self.stitch_api_key.is_empty() && self.stitch_access_token.is_empty() {
+        if self.stitch_api_key.is_empty() && !stitch_bearer_available(&self.stitch_access_token) {
             tracing::warn!(
-                "STITCH_ACCESS_TOKEN is not set — Stitch API key alone cannot run generate_screen; \
-                 set STITCH_ACCESS_TOKEN from `gcloud auth application-default print-access-token`"
+                "STITCH_API_KEY / Stitch Bearer credentials not set — Design stage will fail"
+            );
+        } else if !stitch_bearer_available(&self.stitch_access_token) {
+            tracing::warn!(
+                "Stitch Bearer credentials not available — API key alone cannot run generate_screen; \
+                 run `gcloud auth application-default login`, mount ADC in Compose, or refresh STITCH_ACCESS_TOKEN"
+            );
+        } else if crate::clients::stitch_token::is_token_expired(&self.stitch_access_token) {
+            tracing::warn!(
+                "STITCH_ACCESS_TOKEN in .env looks expired — remove it to use ADC auto-refresh, or update the token"
+            );
+        } else if self.google_cloud_project.is_none() {
+            tracing::warn!(
+                "GOOGLE_CLOUD_PROJECT is not set — Stitch generate_screen may fail; \
+                 set it to your GCP project ID (e.g. gcloud config set project YOUR_PROJECT)"
             );
         }
         if !self.auth_enabled() {

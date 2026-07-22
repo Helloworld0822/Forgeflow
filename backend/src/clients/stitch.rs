@@ -1,3 +1,4 @@
+use crate::clients::stitch_token::StitchTokenProvider;
 use crate::error::{AutoForgeError, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -9,7 +10,7 @@ const STITCH_MCP_BASE: &str = "https://stitch.googleapis.com/mcp";
 pub struct StitchClient {
     http: Client,
     api_key: String,
-    access_token: String,
+    bearer: StitchTokenProvider,
     google_cloud_project: Option<String>,
 }
 
@@ -49,6 +50,36 @@ impl StitchClient {
         access_token: impl Into<String>,
         google_cloud_project: Option<String>,
     ) -> Result<Self> {
+        Self::with_bearer(
+            api_key,
+            StitchTokenProvider::from_env(access_token.into(), google_cloud_project.clone()),
+            google_cloud_project,
+        )
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        api_key: impl Into<String>,
+        access_token: impl Into<String>,
+        google_cloud_project: Option<String>,
+    ) -> Result<Self> {
+        let token = access_token.into();
+        let bearer = if token.is_empty() {
+            StitchTokenProvider::static_only(None)
+        } else {
+            StitchTokenProvider::static_only(Some(token))
+        };
+        Self::with_bearer(api_key, bearer, google_cloud_project)
+    }
+
+    fn with_bearer(
+        api_key: impl Into<String>,
+        bearer: StitchTokenProvider,
+        google_cloud_project: Option<String>,
+    ) -> Result<Self> {
+        let google_cloud_project =
+            google_cloud_project.or_else(|| bearer.quota_project().map(str::to_string));
+
         let http = Client::builder()
             .timeout(Duration::from_secs(300))
             .build()
@@ -57,28 +88,42 @@ impl StitchClient {
         Ok(Self {
             http,
             api_key: api_key.into(),
-            access_token: access_token.into(),
+            bearer,
             google_cloud_project,
         })
     }
 
     fn has_credentials(&self) -> bool {
-        !self.api_key.is_empty() || !self.access_token.is_empty()
+        !self.api_key.is_empty() || self.bearer.can_provide_token()
     }
 
-    /// Stitch MCP 인증: API 키(X-Goog-Api-Key) + 생성용 OAuth Bearer.
-    /// generate_screen_from_text 등 AI 생성 도구는 Bearer 토큰이 필요하다.
-    fn auth_headers(&self) -> Vec<(&'static str, String)> {
+    /// Stitch MCP는 API 키와 Bearer를 동시에내면 401을 반환한다.
+    /// AI 생성 도구는 Bearer만, 그 외는 API 키만 사용한다 (없으면 Bearer로 폴백).
+    fn auth_headers_for_call(
+        &self,
+        method: &str,
+        tool_name: Option<&str>,
+        bearer_token: Option<&str>,
+    ) -> Vec<(&'static str, String)> {
         let mut headers = Vec::new();
-        if !self.api_key.is_empty() {
+        let use_bearer = self.needs_access_token(method, tool_name);
+
+        if use_bearer {
+            if let Some(token) = bearer_token {
+                headers.push(("Authorization", format!("Bearer {token}")));
+                if let Some(project) = &self.google_cloud_project {
+                    headers.push(("X-Goog-User-Project", project.clone()));
+                }
+            }
+        } else if !self.api_key.is_empty() {
             headers.push(("X-Goog-Api-Key", self.api_key.clone()));
+        } else if let Some(token) = bearer_token {
+            headers.push(("Authorization", format!("Bearer {token}")));
+            if let Some(project) = &self.google_cloud_project {
+                headers.push(("X-Goog-User-Project", project.clone()));
+            }
         }
-        if !self.access_token.is_empty() {
-            headers.push(("Authorization", format!("Bearer {}", self.access_token)));
-        }
-        if let Some(project) = &self.google_cloud_project {
-            headers.push(("X-Goog-User-Project", project.clone()));
-        }
+
         headers
     }
 
@@ -95,20 +140,38 @@ impl StitchClient {
     async fn post_mcp(&self, body: &McpRequest) -> Result<serde_json::Value> {
         if !self.has_credentials() {
             return Err(AutoForgeError::StitchApi(
-                "STITCH_API_KEY or STITCH_ACCESS_TOKEN is not configured".into(),
+                "STITCH_API_KEY or Stitch Bearer credentials are not configured".into(),
             ));
         }
 
         let tool_name = body.params.get("name").and_then(|v| v.as_str());
-        if self.needs_access_token(body.method, tool_name) && self.access_token.is_empty() {
+        let needs_bearer = self.needs_access_token(body.method, tool_name);
+
+        if needs_bearer && !self.bearer.can_provide_token() {
             return Err(AutoForgeError::StitchApi(
-                "STITCH_ACCESS_TOKEN is required for Stitch screen generation — \
-                 API key alone is insufficient. Run: \
-                 gcloud auth application-default login && \
-                 gcloud auth application-default print-access-token"
+                "Stitch Bearer token is required for screen generation — set STITCH_ACCESS_TOKEN, \
+                 mount GOOGLE_APPLICATION_CREDENTIALS, or run \
+                 `gcloud auth application-default login`"
                     .into(),
             ));
         }
+
+        self.post_mcp_with_retry(body, tool_name, needs_bearer, false)
+            .await
+    }
+
+    async fn post_mcp_with_retry(
+        &self,
+        body: &McpRequest,
+        tool_name: Option<&str>,
+        needs_bearer: bool,
+        force_refresh: bool,
+    ) -> Result<serde_json::Value> {
+        let bearer_token = if needs_bearer || self.api_key.is_empty() {
+            Some(self.bearer.access_token(force_refresh).await?)
+        } else {
+            None
+        };
 
         let mut req = self
             .http
@@ -117,7 +180,9 @@ impl StitchClient {
             .header("Accept", "application/json, text/event-stream")
             .json(body);
 
-        for (name, value) in self.auth_headers() {
+        for (name, value) in
+            self.auth_headers_for_call(body.method, tool_name, bearer_token.as_deref())
+        {
             req = req.header(name, value);
         }
 
@@ -125,6 +190,15 @@ impl StitchClient {
             .send()
             .await
             .map_err(|e| AutoForgeError::StitchApi(e.to_string()))?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+            && needs_bearer
+            && !force_refresh
+            && self.bearer.can_provide_token()
+        {
+            tracing::info!("Stitch Bearer token rejected (401); refreshing and retrying once");
+            return Box::pin(self.post_mcp_with_retry(body, tool_name, needs_bearer, true)).await;
+        }
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -140,7 +214,15 @@ impl StitchClient {
             .map_err(|e| AutoForgeError::StitchApi(e.to_string()))?;
 
         if let Some(err) = mcp.error {
-            return Err(AutoForgeError::StitchApi(err.message));
+            let tool = body
+                .params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            return Err(AutoForgeError::StitchApi(format!(
+                "{} (tool: {tool})",
+                err.message
+            )));
         }
 
         let result = mcp
@@ -154,6 +236,15 @@ impl StitchClient {
         {
             let message =
                 extract_text_content(&result).unwrap_or_else(|| "unknown Stitch tool error".into());
+            if needs_bearer
+                && !force_refresh
+                && message.contains("authentication")
+                && self.bearer.can_provide_token()
+            {
+                tracing::info!("Stitch tool auth error; refreshing Bearer token and retrying once");
+                return Box::pin(self.post_mcp_with_retry(body, tool_name, needs_bearer, true))
+                    .await;
+            }
             return Err(AutoForgeError::StitchApi(message));
         }
 
@@ -234,7 +325,7 @@ impl StitchClient {
     /// Stitch MCP 엔드포인트 연결 확인 (tools/list + 생성 인증 여부)
     pub async fn health_check(&self) -> std::result::Result<(), String> {
         if !self.has_credentials() {
-            return Err("STITCH_API_KEY or STITCH_ACCESS_TOKEN not configured".into());
+            return Err("STITCH_API_KEY or Stitch Bearer credentials not configured".into());
         }
 
         let body = McpRequest {
@@ -246,12 +337,17 @@ impl StitchClient {
 
         self.post_mcp(&body).await.map_err(|e| e.to_string())?;
 
-        if self.access_token.is_empty() {
+        if !self.bearer.can_provide_token() {
             return Err(
-                "tools/list OK but STITCH_ACCESS_TOKEN missing — Design stage will fail on generate_screen"
+                "tools/list OK but Stitch Bearer credentials missing — Design stage will fail on generate_screen"
                     .into(),
             );
         }
+
+        self.bearer
+            .access_token(false)
+            .await
+            .map_err(|e| format!("Stitch Bearer token refresh failed: {e}"))?;
 
         Ok(())
     }
@@ -451,5 +547,57 @@ mod tests {
             find_download_url(&value).as_deref(),
             Some("https://example.com/screen.html")
         );
+    }
+
+    #[test]
+    fn bearer_only_for_generate_screen_tool() {
+        let client = StitchClient::new_for_test("api-key", "access-token", None).unwrap();
+        let headers = client.auth_headers_for_call(
+            "tools/call",
+            Some("generate_screen_from_text"),
+            Some("access-token"),
+        );
+        let names: Vec<_> = headers.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, vec!["Authorization"]);
+        assert!(!names.contains(&"X-Goog-Api-Key"));
+    }
+
+    #[test]
+    fn api_key_only_for_create_project() {
+        let client = StitchClient::new_for_test("api-key", "access-token", None).unwrap();
+        let headers = client.auth_headers_for_call(
+            "tools/call",
+            Some("create_project"),
+            Some("access-token"),
+        );
+        let names: Vec<_> = headers.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, vec!["X-Goog-Api-Key"]);
+        assert!(!names.contains(&"Authorization"));
+    }
+
+    #[tokio::test]
+    async fn health_check_fails_without_any_stitch_credential() {
+        let client = StitchClient::new_for_test("", "", None).unwrap();
+        let err = client.health_check().await.unwrap_err();
+        assert!(err.contains("not configured"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn stitch_calls_fail_without_any_credential() {
+        let client = StitchClient::new_for_test("", "", None).unwrap();
+        let err = client.ensure_project("title", None).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not configured"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn generate_screen_requires_bearer_credentials_when_only_api_key() {
+        let client = StitchClient::new_for_test("test-api-key", "", None).unwrap();
+        let err = client
+            .generate_screen("proj-id", "build a login page", "MOBILE")
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Bearer"), "{msg}");
     }
 }

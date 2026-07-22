@@ -95,15 +95,25 @@ run_compose() {
     exit 1
   }
 
+  local compose_args=(-f "$COMPOSE_FILE")
+  local adc_path="${HOST_GCLOUD_ADC:-${HOME}/.config/gcloud/application_default_credentials.json}"
+  if [[ -f "$adc_path" ]]; then
+    export HOST_GCLOUD_ADC="$adc_path"
+    compose_args+=(-f compose.gcloud.yml)
+    echo "==> Mounting gcloud ADC for Stitch Bearer auto-refresh"
+  else
+    echo "NOTE: No gcloud ADC at ${adc_path} — set a fresh STITCH_ACCESS_TOKEN or run: gcloud auth application-default login"
+  fi
+
   case "$engine" in
     docker)
-      docker compose -f "$COMPOSE_FILE" "$@"
+      docker compose "${compose_args[@]}" "$@"
       ;;
     podman)
-      DOCKER_HOST="$(podman_socket)" docker compose -f "$COMPOSE_FILE" "$@"
+      DOCKER_HOST="$(podman_socket)" docker compose "${compose_args[@]}" "$@"
       ;;
     podman-compose)
-      podman-compose -f "$COMPOSE_FILE" "$@"
+      podman-compose "${compose_args[@]}" "$@"
       ;;
   esac
 }

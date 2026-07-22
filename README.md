@@ -135,7 +135,7 @@ curl -X POST http://localhost/v1/images \
 전체 목록은 [.env.example](.env.example) 참고. 주요 카테고리:
 
 - **서버**: `HOST`, `PORT`, `RUST_LOG`
-- **AI API 키**: `CURSOR_API_KEY`, `STITCH_API_KEY` (필수)
+- **AI API 키**: `CURSOR_API_KEY`, `STITCH_API_KEY`, Stitch Bearer (`STITCH_ACCESS_TOKEN` 또는 ADC/gcloud 자동 갱신 — [상세](docs/STITCH_ACCESS_TOKEN.md))
 - **GitHub 자동화**: `GITHUB_TOKEN`, `GITHUB_ORG`, `GITHUB_AUTO_MERGE`
 - **보안**: `API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_UPLOAD_BYTES` — 운영 배포 전 반드시 확인
 - **아티팩트/이미지 저장소 (로컬 디스크)**: `ARTIFACTS_DIR`, `MAX_IMAGE_BYTES`
@@ -149,6 +149,7 @@ curl -X POST http://localhost/v1/images \
 
 실사용(프로덕션) 배포 전 최소한 아래 항목을 확인하세요.
 
+- [ ] `CURSOR_API_KEY`, `STITCH_API_KEY`, `STITCH_ACCESS_TOKEN` 설정 — Design 단계에 Stitch Bearer 토큰 필수 ([docs/STITCH_ACCESS_TOKEN.md](docs/STITCH_ACCESS_TOKEN.md))
 - [ ] `API_KEY` 설정 — 미설정 시 REST API가 인증 없이 공개됨
 - [ ] `CORS_ALLOWED_ORIGINS`를 실제 프론트엔드 도메인으로 제한
 - [ ] `ARTIFACTS_DIR`가 영속 볼륨(디스크)을 가리키는지 확인 — Compose 환경에서는
@@ -157,8 +158,16 @@ curl -X POST http://localhost/v1/images \
 - [ ] 여러 호스트(노드)에 분산 배포하는 경우 `ARTIFACTS_DIR`를 NFS 등 네트워크 파일시스템으로 교체
 - [ ] CI(`.github/workflows/ci.yml`)가 통과하는지 확인 (fmt/clippy/test/build + compose smoke test)
 
+## Neovim MCU 개발 (Arduino / STM32)
+
+- **Arduino** — [yuukiflow/Arduino-Nvim](https://github.com/yuukiflow/Arduino-Nvim) (LSP, 보드/포트 관리, 라이브러리)
+- **STM32 / PlatformIO** — `autoforge-mcu` (빌드·플래시·시리얼)
+
+설치·명령어·lazy.nvim 설정은 [nvim/README.md](nvim/README.md)를 참고하세요.
+
 ## 상세 문서
 
+- [docs/STITCH_ACCESS_TOKEN.md](docs/STITCH_ACCESS_TOKEN.md) — Stitch Bearer 토큰 없을 때 동작
 - [docs/PODMAN.md](docs/PODMAN.md) — Podman / Compose 배포
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 아키텍처 설계
 - [docs/QUALITY_WORKFLOW.md](docs/QUALITY_WORKFLOW.md) — 품질 게이트

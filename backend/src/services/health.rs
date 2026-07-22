@@ -163,10 +163,16 @@ pub async fn readiness(app: &App) -> HealthReport {
         checks.insert(k, v);
     }
 
-    if app.config.stitch_api_key.is_empty() && app.config.stitch_access_token.is_empty() {
+    if app.config.stitch_api_key.is_empty()
+        && !crate::clients::stitch_token::StitchTokenProvider::from_env(
+            app.config.stitch_access_token.clone(),
+            app.config.google_cloud_project.clone(),
+        )
+        .can_provide_token()
+    {
         checks.insert(
             "stitch_api".into(),
-            skipped("STITCH_API_KEY / STITCH_ACCESS_TOKEN not configured"),
+            skipped("STITCH_API_KEY / Stitch Bearer credentials not configured"),
         );
     } else {
         let stitch = app.stitch.clone();
